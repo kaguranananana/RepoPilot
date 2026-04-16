@@ -11,11 +11,11 @@ class ToolRegistryTest {
     @Test
     void shouldExecuteRegisteredTool() {
         ToolRegistry toolRegistry = new ToolRegistry();
-        toolRegistry.register("echo", "回显输入文本", arguments -> new ToolExecutionResult(true, arguments.get("text")));
+        toolRegistry.register("echo", "回显输入文本", arguments -> ToolExecutionResult.success(arguments.get("text")));
 
         ToolExecutionResult result = toolRegistry.execute("echo", Map.of("text", "hello"));
 
-        assertEquals(true, result.success());
+        assertEquals(ToolExecutionResult.Status.SUCCESS, result.status());
         assertEquals("hello", result.output());
         assertEquals(1, toolRegistry.list().size());
     }

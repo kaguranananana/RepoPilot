@@ -86,6 +86,8 @@
 - [x] 先实现最小 Tool Registry。
 - [x] 实现“模型请求工具 -> 执行工具 -> 注入 TOOL 消息 -> 模型给最终回答”的最小主循环。
 - [x] 加入 `maxSteps` 限制，作为第一层防死循环保护。
+- [x] 把工具结果从二元 `success` 升级为显式状态，区分 `SUCCESS / RECOVERABLE_ERROR / FATAL_ERROR`。
+- [x] 在 `AgentLoop` 中对致命工具错误执行 fail-fast，避免把系统级失败伪装成普通 `TOOL` 消息继续运行。
 - [ ] 后续把当前最小 `AgentLoop` 向“纯 Runner + 外围 Orchestrator”方向收敛，避免把 CLI/server 逻辑混进运行时内核。
 
 ### Task 5: CLI 到 Server 的 HTTP 协作
@@ -153,6 +155,7 @@
 
 - [ ] 在模型调用前后发 trace。
 - [ ] 在工具调用前后发 trace。
+- [ ] 让工具 trace 明确记录 `SUCCESS / RECOVERABLE_ERROR / FATAL_ERROR` 三态，并保证 `FATAL_ERROR` 在中断主链路前也能被上报。
 - [ ] 把 trace 从 core 经 CLI 同步到 server。
 - [ ] 为后续 Hook 生命周期预留最小扩展点，不把 trace 上报硬编码成唯一实现。
 
@@ -171,6 +174,7 @@
 
 - [ ] 把工具执行从“直接调用 handler”升级为“校验 -> 权限 -> 执行 -> 结构化结果”的受治理流水线。
 - [ ] 权限决策遵循 `deny -> ask -> allow` 顺序，并默认 fail-closed。
+- [ ] 统一工具失败出口：由治理层把校验失败、权限拒绝、执行异常收敛成 `RECOVERABLE_ERROR` 或 `FATAL_ERROR`，避免 `AgentLoop` 同时消费多套错误协议。
 - [ ] 限制工具只能操作当前工作区，并给危险命令留出审批钩子。
 - [ ] 在写文件前生成 diff 摘要，防止模型直接写盘绕过审查。
 - [ ] 保持工具定义输出顺序稳定，避免动态工具集导致 prompt 抖动。

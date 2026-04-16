@@ -42,6 +42,10 @@ public class AgentLoop {
                     ToolExecutionResult executionResult =
                             toolRegistry.execute(toolCall.toolName(), toolCall.arguments());
 
+                    // 致命错误说明主链路已经失真，必须立刻暴露真实错误，
+                    // 不能继续伪装成一条普通 TOOL 消息喂给下一轮模型。
+                    failIfFatal(toolCall.toolName(), executionResult);
+
                     // 工具结果会被重新注入消息列表，
                     // 让下一轮模型推理能够“看到自己刚刚调用工具后发生了什么”。
                     messages.add(new ConversationMessage(
@@ -55,10 +59,21 @@ public class AgentLoop {
         throw new AgentLoopLimitExceededException(request.maxSteps());
     }
 
-    private String formatToolMessage(String toolName, ToolExecutionResult executionResult) {
-        if (executionResult.success()) {
-            return "[" + toolName + "] " + executionResult.output();
+    private void failIfFatal(String toolName, ToolExecutionResult executionResult) {
+        if (executionResult.isFatal()) {
+            throw new IllegalStateException(
+                    "Tool execution failed fatally: " + toolName + ", output=" + executionResult.output()
+            );
         }
-        return "[" + toolName + ":error] " + executionResult.output();
+    }
+
+    private String formatToolMessage(String toolName, ToolExecutionResult executionResult) {
+        return switch (executionResult.status()) {
+            case SUCCESS -> "[" + toolName + "] " + executionResult.output();
+            case RECOVERABLE_ERROR -> "[" + toolName + ":error] " + executionResult.output();
+            case FATAL_ERROR -> throw new IllegalArgumentException(
+                    "Fatal tool execution must not be formatted as a TOOL message."
+            );
+        };
     }
 }
