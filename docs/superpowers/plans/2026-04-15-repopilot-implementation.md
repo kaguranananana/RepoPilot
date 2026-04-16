@@ -111,10 +111,10 @@
 - Create: `repopilot-core/src/main/java/com/repopilot/core/prompt/SystemPromptBuilder.java`
 - Create: `repopilot-core/src/test/java/com/repopilot/core/prompt/SystemPromptBuilderTest.java`
 
-- [ ] 固定 system prompt 中静态宪法与动态政策的边界，避免用户和工作区数据混入稳定前缀。
-- [ ] 动态段先支持 session preamble、工作区信息、Skill 摘要、预算提示与可用工具子集。
-- [ ] 把高频 runtime metadata 设计成独立 runtime context 块，不直接写进稳定 system prompt。
-- [ ] 保证静态段内容稳定、动态段内容可替换，为后续缓存和成本优化打基础。
+- [x] 固定 system prompt 中静态宪法与动态政策的边界，避免用户和工作区数据混入稳定前缀。
+- [x] 动态段先支持 session preamble、工作区信息、Skill 摘要、预算提示与可用工具子集。
+- [x] 把高频 runtime metadata 设计成独立 runtime context 块，不直接写进稳定 system prompt。
+- [x] 保证静态段内容稳定、动态段内容可替换，为后续缓存和成本优化打基础。
 
 ### Task 7: CLI `run` 主命令
 
