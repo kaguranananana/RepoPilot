@@ -11,6 +11,8 @@ import com.repopilot.core.model.ModelResponse;
 import com.repopilot.core.prompt.DynamicPromptContext;
 import com.repopilot.core.prompt.SystemPromptBoundary;
 import com.repopilot.core.prompt.SystemPromptBuilder;
+import com.repopilot.core.tool.ToolDefinition;
+import com.repopilot.core.tool.builtin.BuiltinToolRegistrar;
 import com.repopilot.core.tool.ToolRegistry;
 import com.repopilot.protocol.session.SessionSummary;
 import java.time.Clock;
@@ -19,6 +21,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.nio.file.Path;
 
 /**
  * CLI 侧 runtime 引导器。
@@ -31,23 +34,39 @@ public interface CliRuntimeBootstrap {
     String run(SessionSummary sessionSummary, String prompt);
 
     static CliRuntimeBootstrap createDefault() {
-        return new DefaultCliRuntimeBootstrap(Clock.systemUTC(), new SystemPromptBuilder());
+        // 默认入口固定从当前工作区根目录读取 `.env.local`，
+        // 再让真实进程环境覆盖同名变量，保证显式 export 的值优先级更高。
+        Path workspaceRoot = Path.of("").toAbsolutePath().normalize();
+        return new DefaultCliRuntimeBootstrap(
+                Clock.systemUTC(),
+                new SystemPromptBuilder(),
+                new EnvironmentBackedModelAdapterFactory(
+                        LocalEnvironmentMapLoader.load(workspaceRoot, System.getenv())
+                )
+        );
     }
 
     /**
-     * 默认 bootstrap 使用当前最小 runtime 组件完成一次单回合执行。
-     * 当前阶段还没有接真实模型，所以这里故意使用确定性适配器，
-     * 先验证“session -> prompt 组装 -> core 运行 -> 最终回答”这条链路本身。
+     * 默认 bootstrap 使用当前最小 runtime 组件完成一次本地运行。
+     * 当 provider=bootstrap 时，它会走确定性假模型；
+     * 当 provider=deepseek 时，它会走真实模型调用。
      */
     final class DefaultCliRuntimeBootstrap implements CliRuntimeBootstrap {
 
         private final Clock clock;
         private final SystemPromptBuilder systemPromptBuilder;
+        private final ModelAdapterFactory modelAdapterFactory;
 
-        DefaultCliRuntimeBootstrap(Clock clock, SystemPromptBuilder systemPromptBuilder) {
+        DefaultCliRuntimeBootstrap(
+                Clock clock,
+                SystemPromptBuilder systemPromptBuilder,
+                ModelAdapterFactory modelAdapterFactory
+        ) {
             this.clock = Objects.requireNonNull(clock, "clock must not be null.");
             this.systemPromptBuilder =
                     Objects.requireNonNull(systemPromptBuilder, "systemPromptBuilder must not be null.");
+            this.modelAdapterFactory =
+                    Objects.requireNonNull(modelAdapterFactory, "modelAdapterFactory must not be null.");
         }
 
         @Override
@@ -56,9 +75,10 @@ public interface CliRuntimeBootstrap {
             String safePrompt = requireNonBlank(prompt, "prompt must not be blank.");
 
             // 先建立本轮可见的最小工具集合。
-            // 当前阶段还没有挂真实工具，所以这里先传入一个空 registry，
-            // 但主循环的装配方式已经和后续真实运行时保持一致。
+            // 这里显式把第一批内置工具注册进来，
+            // 让 dynamic prompt 和后续运行时执行链路看到的是同一套真实能力。
             ToolRegistry toolRegistry = new ToolRegistry();
+            BuiltinToolRegistrar.registerAll(toolRegistry, Path.of("").toAbsolutePath().normalize());
 
             // 再把稳定宪法、动态政策和运行时 metadata 分块组装，
             // 避免把 sessionId、时间等高频信息直接混进稳定 system prompt 前缀。
@@ -70,9 +90,9 @@ public interface CliRuntimeBootstrap {
             // 让 CLI 到 core 的一次最小调用真正走过统一运行时入口。
             AgentLoop agentLoop = new AgentLoop(toolRegistry);
             AgentLoopResult result = agentLoop.run(new AgentLoopRequest(
-                    new BootstrapModelAdapter(sessionSummary),
+                    modelAdapterFactory.create(sessionSummary, toolRegistry.list()),
                     buildMessages(promptBoundary, safePrompt),
-                    1
+                    8
             ));
 
             return result.finalAnswer();
@@ -94,9 +114,10 @@ public interface CliRuntimeBootstrap {
                     // 保持与会话前导、预算提示等动态信息分离。
                     "workspaceId=%s".formatted(sessionSummary.workspaceId()),
                     List.of(),
-                    // 当前适配器只返回最终回答，不走工具循环，
-                    // 因此这里把预算明确固定为 1 步。
-                    "maxSteps=1",
+                    // 当前入口先把预算固定为 8 步，
+                    // 既能覆盖一轮真实 tool-calling，
+                    // 又不会把最小演示回合无限放大。
+                    "maxSteps=8",
                     toolRegistry.list(),
                     Map.of(
                             "sessionId", sessionSummary.sessionId(),
@@ -129,6 +150,38 @@ public interface CliRuntimeBootstrap {
                 throw new IllegalArgumentException(message);
             }
             return value.strip();
+        }
+    }
+
+    @FunctionalInterface
+    interface ModelAdapterFactory {
+
+        ModelAdapter create(SessionSummary sessionSummary, List<ToolDefinition> availableTools);
+    }
+
+    final class EnvironmentBackedModelAdapterFactory implements ModelAdapterFactory {
+
+        private final CliModelConfig modelConfig;
+
+        EnvironmentBackedModelAdapterFactory(Map<String, String> environment) {
+            this.modelConfig = CliModelConfig.fromEnvironment(environment);
+        }
+
+        @Override
+        public ModelAdapter create(SessionSummary sessionSummary, List<ToolDefinition> availableTools) {
+            Objects.requireNonNull(sessionSummary, "sessionSummary must not be null.");
+            Objects.requireNonNull(availableTools, "availableTools must not be null.");
+
+            return switch (modelConfig.provider()) {
+                case "bootstrap" -> new BootstrapModelAdapter(sessionSummary);
+                case "deepseek" -> new DeepSeekChatModelAdapter(
+                        modelConfig.apiKey(),
+                        modelConfig.baseUrl(),
+                        modelConfig.modelName(),
+                        availableTools
+                );
+                default -> throw new IllegalStateException("Unsupported model provider: " + modelConfig.provider());
+            };
         }
     }
 

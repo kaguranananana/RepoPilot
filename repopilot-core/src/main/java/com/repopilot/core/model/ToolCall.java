@@ -1,5 +1,6 @@
 package com.repopilot.core.model;
 
+import java.util.Objects;
 import java.util.Map;
 
 /**
@@ -14,7 +15,16 @@ public record ToolCall(
 ) {
 
     public ToolCall {
+        id = requireNonBlank(id, "tool call id must not be blank.");
+        toolName = requireNonBlank(toolName, "toolName must not be blank.");
         arguments = arguments == null ? Map.of() : Map.copyOf(arguments);
     }
-}
 
+    private static String requireNonBlank(String value, String message) {
+        Objects.requireNonNull(value, message);
+        if (value.isBlank()) {
+            throw new IllegalArgumentException(message);
+        }
+        return value.strip();
+    }
+}

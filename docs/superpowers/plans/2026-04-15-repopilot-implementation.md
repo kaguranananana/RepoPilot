@@ -139,10 +139,10 @@
 - Create: `repopilot-core/src/test/java/com/repopilot/core/tool/builtin/GrepFilesToolTest.java`
 - Create: `repopilot-core/src/test/java/com/repopilot/core/tool/builtin/RunCommandToolTest.java`
 
-- [ ] 先补 `read_file`。
-- [ ] 再补 `grep_files`。
-- [ ] 最后补 `run_command`。
-- [ ] 保证三者都能被 Tool Registry 注册和执行。
+- [x] 先补 `read_file`。
+- [x] 再补 `grep_files`。
+- [x] 最后补 `run_command`。
+- [x] 保证三者都能被 Tool Registry 注册和执行。
 
 ### Task 9: 运行时 Trace 上报
 

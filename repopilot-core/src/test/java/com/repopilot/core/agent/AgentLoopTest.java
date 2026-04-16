@@ -37,10 +37,14 @@ class AgentLoopTest {
         );
 
         assertEquals("分析完成", result.finalAnswer());
-        assertEquals(3, result.messages().size());
-        assertEquals(MessageRole.TOOL, result.messages().get(1).role());
-        assertEquals("[echo] pom.xml", result.messages().get(1).content());
-        assertEquals(MessageRole.ASSISTANT, result.messages().get(2).role());
+        assertEquals(4, result.messages().size());
+        assertEquals(MessageRole.ASSISTANT, result.messages().get(1).role());
+        assertEquals(1, result.messages().get(1).toolCalls().size());
+        assertEquals("call-1", result.messages().get(1).toolCalls().get(0).id());
+        assertEquals(MessageRole.TOOL, result.messages().get(2).role());
+        assertEquals("call-1", result.messages().get(2).toolCallId());
+        assertEquals("[echo] pom.xml", result.messages().get(2).content());
+        assertEquals(MessageRole.ASSISTANT, result.messages().get(3).role());
     }
 
     @Test
@@ -66,8 +70,11 @@ class AgentLoopTest {
         );
 
         assertEquals("请检查文件路径后重试", result.finalAnswer());
-        assertEquals(MessageRole.TOOL, result.messages().get(1).role());
-        assertEquals("[read_file:error] 文件不存在: missing.txt", result.messages().get(1).content());
+        assertEquals(MessageRole.ASSISTANT, result.messages().get(1).role());
+        assertEquals("call-1", result.messages().get(1).toolCalls().get(0).id());
+        assertEquals(MessageRole.TOOL, result.messages().get(2).role());
+        assertEquals("call-1", result.messages().get(2).toolCallId());
+        assertEquals("[read_file:error] 文件不存在: missing.txt", result.messages().get(2).content());
     }
 
     @Test

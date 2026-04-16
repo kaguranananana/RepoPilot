@@ -64,7 +64,8 @@ public record DynamicPromptContext(
             // 避免把脏数据静默带进动态 prompt，污染后续模型行为。
             normalized.add(new ToolDefinition(
                     normalizeRequiredText(toolDefinition.name(), "Tool name must not be blank."),
-                    normalizeRequiredText(toolDefinition.description(), "Tool description must not be blank.")
+                    normalizeRequiredText(toolDefinition.description(), "Tool description must not be blank."),
+                    toolDefinition.parametersSchema()
             ));
         }
         return List.copyOf(normalized);

@@ -38,6 +38,11 @@ public class AgentLoop {
             }
 
             if (response instanceof ToolCallModelResponse toolCallResponse) {
+                // 先把 assistant 的 tool_calls 记录进消息历史，
+                // 这样下一轮真实模型调用时，协议里就能形成
+                // `assistant(tool_calls) -> tool(tool_call_id)` 的正确配对关系。
+                messages.add(ConversationMessage.assistantToolCalls(toolCallResponse.toolCalls()));
+
                 for (ToolCall toolCall : toolCallResponse.toolCalls()) {
                     ToolExecutionResult executionResult =
                             toolRegistry.execute(toolCall.toolName(), toolCall.arguments());
@@ -48,8 +53,8 @@ public class AgentLoop {
 
                     // 工具结果会被重新注入消息列表，
                     // 让下一轮模型推理能够“看到自己刚刚调用工具后发生了什么”。
-                    messages.add(new ConversationMessage(
-                            MessageRole.TOOL,
+                    messages.add(ConversationMessage.toolResult(
+                            toolCall.id(),
                             formatToolMessage(toolCall.toolName(), executionResult)
                     ));
                 }

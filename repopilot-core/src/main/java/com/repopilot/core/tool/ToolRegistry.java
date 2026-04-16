@@ -17,15 +17,25 @@ public class ToolRegistry {
     private final Map<String, RegisteredTool> tools = new LinkedHashMap<>();
 
     public synchronized void register(String name, String description, ToolHandler handler) {
+        register(name, description, Map.of(), handler);
+    }
+
+    public synchronized void register(
+            String name,
+            String description,
+            Map<String, Object> parametersSchema,
+            ToolHandler handler
+    ) {
         requireNonBlank(name, "Tool name must not be blank.");
         requireNonBlank(description, "Tool description must not be blank.");
+        Objects.requireNonNull(parametersSchema, "Tool parameters schema must not be null.");
         Objects.requireNonNull(handler, "Tool handler must not be null.");
 
         if (tools.containsKey(name)) {
             throw new IllegalArgumentException("Tool already registered: " + name);
         }
 
-        tools.put(name, new RegisteredTool(new ToolDefinition(name, description), handler));
+        tools.put(name, new RegisteredTool(new ToolDefinition(name, description, parametersSchema), handler));
     }
 
     public synchronized List<ToolDefinition> list() {
@@ -56,4 +66,3 @@ public class ToolRegistry {
     ) {
     }
 }
-
