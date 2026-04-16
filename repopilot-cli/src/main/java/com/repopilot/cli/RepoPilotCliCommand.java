@@ -1,5 +1,6 @@
 package com.repopilot.cli;
 
+import com.repopilot.cli.command.RunCommand;
 import picocli.CommandLine.Command;
 
 /**
@@ -9,7 +10,10 @@ import picocli.CommandLine.Command;
 @Command(
         name = "repopilot",
         mixinStandardHelpOptions = true,
-        description = "RepoPilot 智能编码代理平台的命令行入口。"
+        description = "RepoPilot 智能编码代理平台的命令行入口。",
+        subcommands = {
+                RunCommand.class
+        }
 )
 public class RepoPilotCliCommand implements Runnable {
 
@@ -19,4 +23,3 @@ public class RepoPilotCliCommand implements Runnable {
         System.out.println("RepoPilot CLI skeleton is ready.");
     }
 }
-

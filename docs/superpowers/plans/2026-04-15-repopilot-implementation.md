@@ -124,9 +124,9 @@
 - Create: `repopilot-cli/src/main/java/com/repopilot/cli/runtime/CliRuntimeBootstrap.java`
 - Create: `repopilot-cli/src/test/java/com/repopilot/cli/command/RunCommandTest.java`
 
-- [ ] 把“创建 session -> 启动本地 runtime”的入口挂到 CLI。
-- [ ] 先支持最小参数：`workspaceId`、`serverBaseUrl`、`prompt`。
-- [ ] 让 CLI 能把一次用户任务送进 core。
+- [x] 把“创建 session -> 启动本地 runtime”的入口挂到 CLI。
+- [x] 先支持最小参数：`workspaceId`、`serverBaseUrl`、`prompt`。
+- [x] 让 CLI 能把一次用户任务送进 core。
 
 ### Task 8: 第一批真实工具
 
