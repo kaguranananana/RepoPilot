@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** 构建一个采用“本地执行 Runtime + 服务端 Control Plane”架构的 Java Coding Agent 平台，先跑通最小可验证主链路，并补上静态/动态 prompt 边界、结构化上下文压缩与最小评估链路。
+**Goal:** 构建一个采用“本地执行 Runtime + 服务端 Control Plane”架构的 Java Coding Agent 平台，先跑通最小可验证主链路，并补上静态/动态 prompt 边界、结构化 short-term memory、渐进式 skill loading、可替换执行后端抽象、显式模型路由 / handoff 预留与最小评估链路。
 
-**Architecture:** `repopilot-protocol` 提供共享协议，`repopilot-core` 提供最小 ReAct Runtime、system prompt 组装、Hook 生命周期、上下文压缩和受治理的工具执行链路，`repopilot-cli` 负责本地入口、HTTP 客户端与评估运行器，`repopilot-server` 提供 session / trace 控制面。先用内存存储打通链路，再逐步替换为 JPA 与 PostgreSQL。
+**Architecture:** `repopilot-protocol` 提供共享协议，`repopilot-core` 提供最小 ReAct Runtime、system prompt 组装、working memory、渐进式 skill loading、模型路由 / handoff 结构与受治理的工具执行链路，`repopilot-cli` 负责本地入口、HTTP 客户端、执行后端装配、未来 ACP adapter 边界与评估运行器，`repopilot-server` 提供 session / trace 控制面。先用内存存储打通链路，再逐步替换为 JPA 与 PostgreSQL，并保持命令执行后端可从本地实现演进到真实 sandbox。
 
 **Tech Stack:** Java 17, Maven, Spring Boot 3, Jackson, Picocli, JDK HttpClient, JUnit 5
 
@@ -179,7 +179,7 @@
 - [ ] 在写文件前生成 diff 摘要，防止模型直接写盘绕过审查。
 - [ ] 保持工具定义输出顺序稳定，避免动态工具集导致 prompt 抖动。
 
-### Task 11: 结构化上下文压缩
+### Task 11: 结构化 Short-Term Memory 与上下文压缩
 
 **Files:**
 - Modify: `repopilot-core/src/main/java/com/repopilot/core/model/MessageRole.java`
@@ -187,29 +187,56 @@
 - Modify: `repopilot-core/src/main/java/com/repopilot/core/agent/AgentLoop.java`
 - Create: `repopilot-core/src/main/java/com/repopilot/core/context/ContextCompactionPolicy.java`
 - Create: `repopilot-core/src/main/java/com/repopilot/core/context/ContextCompactor.java`
+- Create: `repopilot-core/src/main/java/com/repopilot/core/context/WorkingMemory.java`
+- Create: `repopilot-core/src/main/java/com/repopilot/core/context/WorkingMemorySnapshot.java`
 - Create: `repopilot-core/src/test/java/com/repopilot/core/context/ContextCompactorTest.java`
+- Create: `repopilot-core/src/test/java/com/repopilot/core/context/WorkingMemoryTest.java`
 - Create: `repopilot-core/src/test/java/com/repopilot/core/agent/AgentLoopContextCompactionTest.java`
 
-- [ ] 定义 `context_summary` 在运行时消息模型中的表示方式。
-- [ ] 固定保留 system prompt、任务目标与最近若干轮高保真消息。
+- [ ] 定义 `working_memory` 与 `context_summary` 在运行时消息模型中的表示方式。
+- [ ] 固定保留 system prompt、任务目标、已确认事实、最近关键工具结果、当前阻塞、产出物引用与最近若干轮高保真消息。
 - [ ] 把更早的工具执行轨迹压缩为结构化摘要，而不是普通聊天总结。
 - [ ] 给压缩动作预留 trace 钩子，便于后续回放和调试。
-- [ ] 给后续 append-only 历史归档和 idle session auto-compact 预留数据结构接口。
+- [ ] 给后续 append-only 历史归档、会话恢复和 idle session auto-compact 预留数据结构接口。
 
-### Task 12: 持久化替换
+### Task 12: Skill 渐进式加载
 
 **Files:**
-- Modify: `repopilot-server/pom.xml`
-- Create: `repopilot-server/src/main/java/com/repopilot/server/session/persistence/...`
-- Create: `repopilot-server/src/main/resources/application.yml`
-- Create: `repopilot-server/src/main/resources/db/migration/...`
-- Create: `repopilot-server/src/test/java/com/repopilot/server/session/persistence/...`
+- Create: `repopilot-core/src/main/java/com/repopilot/core/skill/SkillSummary.java`
+- Create: `repopilot-core/src/main/java/com/repopilot/core/skill/SkillDescriptor.java`
+- Create: `repopilot-core/src/main/java/com/repopilot/core/skill/SkillContent.java`
+- Create: `repopilot-core/src/main/java/com/repopilot/core/skill/SkillLoader.java`
+- Create: `repopilot-core/src/main/java/com/repopilot/core/skill/SkillIndex.java`
+- Create: `repopilot-core/src/test/java/com/repopilot/core/skill/SkillLoaderTest.java`
 
-- [ ] 把内存 session / trace 存储替换为 JPA。
-- [ ] 接入 PostgreSQL 与 Flyway。
-- [ ] 保证 controller 层接口不变。
+- [ ] 扫描项目级和用户级 Skill 元信息，建立稳定排序的 `skill index`。
+- [ ] 默认只把 skill 摘要暴露给 system prompt，并给后续 `allowed-tools` 约束预留字段。
+- [ ] 提供按名称加载完整 Skill 正文的能力。
+- [ ] 提供 Skill 附属脚本、模板、示例文档的按需递进加载能力。
+- [ ] 为后续 `global policy ∩ skill allowed-tools` 的工具约束模型预留扩展点。
 
-### Task 13: Background Task
+### Task 13: 命令执行后端抽象与 Sandbox 预留
+
+**Files:**
+- Modify: `repopilot-core/src/main/java/com/repopilot/core/tool/builtin/RunCommandTool.java`
+- Modify: `repopilot-core/src/main/java/com/repopilot/core/tool/builtin/BuiltinToolRegistrar.java`
+- Modify: `repopilot-cli/src/main/java/com/repopilot/cli/runtime/CliRuntimeBootstrap.java`
+- Create: `repopilot-core/src/main/java/com/repopilot/core/execution/CommandExecutionBackend.java`
+- Create: `repopilot-core/src/main/java/com/repopilot/core/execution/CommandExecutionRequest.java`
+- Create: `repopilot-core/src/main/java/com/repopilot/core/execution/CommandExecutionResult.java`
+- Create: `repopilot-core/src/main/java/com/repopilot/core/execution/LocalProcessCommandExecutionBackend.java`
+- Create: `repopilot-cli/src/main/java/com/repopilot/cli/runtime/CliExecutionConfig.java`
+- Create: `repopilot-core/src/test/java/com/repopilot/core/execution/LocalProcessCommandExecutionBackendTest.java`
+- Create: `repopilot-cli/src/test/java/com/repopilot/cli/runtime/CliExecutionConfigTest.java`
+- Modify: `repopilot-core/src/test/java/com/repopilot/core/tool/builtin/RunCommandToolTest.java`
+
+- [ ] 抽象 `CommandExecutionBackend`，把 `ProcessBuilder` 从 `RunCommandTool` 中收敛到本地 backend 实现内部。
+- [ ] 统一命令执行结果模型，至少显式返回 `exitCode`、`stdout`、`stderr`、`durationMillis`、`backendKind`。
+- [ ] 让 `RunCommandTool` 只负责工具协议和结果封装，不再直接管理本地进程生命周期。
+- [ ] 在 CLI/bootstrap 层明确选择执行 backend，并保证默认行为是显式配置而不是隐式 fallback。
+- [ ] 为后续 `run_code` 与真实云端 sandbox backend（如 `E2B`）预留接口，但一期不接入真实远程服务。
+
+### Task 14: Background Task
 
 **Files:**
 - Create: `repopilot-core/src/main/java/com/repopilot/core/background/BackgroundTaskManager.java`
@@ -218,19 +245,8 @@
 
 - [ ] 支持长命令异步执行。
 - [ ] 支持下一轮推理前读取后台完成结果。
+- [ ] 复用命令执行后端抽象，避免后台任务再维护一套独立进程管理逻辑。
 - [ ] 为后续 task system 预留扩展点。
-
-### Task 14: Skill Loading
-
-**Files:**
-- Create: `repopilot-core/src/main/java/com/repopilot/core/skill/SkillSummary.java`
-- Create: `repopilot-core/src/main/java/com/repopilot/core/skill/SkillLoader.java`
-- Create: `repopilot-core/src/test/java/com/repopilot/core/skill/SkillLoaderTest.java`
-
-- [ ] 扫描项目级和用户级 `SKILL.md`。
-- [ ] 暴露 skill 摘要给 system prompt，并给后续 `allowed-tools` 约束预留字段。
-- [ ] 提供按名称加载完整 skill 内容的能力。
-- [ ] 为后续 `global policy ∩ skill allowed-tools` 的工具约束模型预留扩展点。
 
 ### Task 15: 最小评估链路
 
@@ -249,7 +265,58 @@
 - [ ] 提供命令行评估入口，能够重复执行同一组任务并输出结构化报告。
 - [ ] 保持评估链路独立于主 runtime，避免为了评估污染正常执行路径。
 
-### Task 16: 演示与收尾
+### Task 16: 持久化替换
+
+**Files:**
+- Modify: `repopilot-server/pom.xml`
+- Create: `repopilot-server/src/main/java/com/repopilot/server/session/persistence/...`
+- Create: `repopilot-server/src/main/resources/application.yml`
+- Create: `repopilot-server/src/main/resources/db/migration/...`
+- Create: `repopilot-server/src/test/java/com/repopilot/server/session/persistence/...`
+
+- [ ] 把内存 session / trace 存储替换为 JPA。
+- [ ] 接入 PostgreSQL 与 Flyway。
+- [ ] 保证 controller 层接口不变。
+
+### Task 17: SSE 推送与实时事件流
+
+**Files:**
+- Modify: `repopilot-server/src/main/java/com/repopilot/server/session/SessionController.java`
+- Modify: `repopilot-server/src/main/java/com/repopilot/server/session/SessionApplicationService.java`
+- Create: `repopilot-server/src/main/java/com/repopilot/server/session/TraceEventStreamBroadcaster.java`
+- Create: `repopilot-server/src/test/java/com/repopilot/server/session/SessionTraceSseTests.java`
+
+- [ ] 提供基于 session 的最小 SSE 订阅入口，让控制面可以实时接收 trace 事件。
+- [ ] 保持 SSE 事件模型复用现有 `TraceEventRecord` 语义，不再发明第二套事件协议。
+- [ ] 保证已有 HTTP 查询接口仍然可用，SSE 只作为增量实时通道存在。
+- [ ] 为后续 Web 控制台或 IDE 订阅实时事件预留稳定入口。
+
+### Task 18: 模型路由、Handoff 与 ACP 接入边界预留
+
+**Files:**
+- Modify: `repopilot-cli/src/main/java/com/repopilot/cli/runtime/CliRuntimeBootstrap.java`
+- Create: `repopilot-core/src/main/java/com/repopilot/core/modelrouting/ModelRouteRequest.java`
+- Create: `repopilot-core/src/main/java/com/repopilot/core/modelrouting/ModelRouteDecision.java`
+- Create: `repopilot-core/src/main/java/com/repopilot/core/modelrouting/ModelRouter.java`
+- Create: `repopilot-core/src/main/java/com/repopilot/core/modelrouting/StaticPolicyModelRouter.java`
+- Create: `repopilot-core/src/main/java/com/repopilot/core/handoff/HandoffPacket.java`
+- Create: `repopilot-core/src/main/java/com/repopilot/core/handoff/HandoffBuilder.java`
+- Create: `repopilot-cli/src/main/java/com/repopilot/cli/runtime/CliModelRoutingConfig.java`
+- Create: `repopilot-cli/src/main/java/com/repopilot/cli/acp/AcpAgentAdapter.java`
+- Create: `repopilot-cli/src/main/java/com/repopilot/cli/acp/AcpSessionBridge.java`
+- Create: `repopilot-core/src/test/java/com/repopilot/core/modelrouting/StaticPolicyModelRouterTest.java`
+- Create: `repopilot-core/src/test/java/com/repopilot/core/handoff/HandoffBuilderTest.java`
+- Create: `repopilot-cli/src/test/java/com/repopilot/cli/runtime/CliModelRoutingConfigTest.java`
+- Create: `repopilot-cli/src/test/java/com/repopilot/cli/acp/AcpSessionBridgeTest.java`
+
+- [ ] 抽象 `ModelRouter`，让模型选择基于显式策略输入，而不是散落在 bootstrap 或 adapter 里的隐式判断。
+- [ ] 固定 `ModelRouteRequest / ModelRouteDecision` 结构，至少覆盖任务模式、工具需求、上下文体积、预算和所选模型。
+- [ ] 提供最小 `StaticPolicyModelRouter`，先实现可解释、可测试的静态策略，不做黑盒自动路由。
+- [ ] 定义 `HandoffPacket`，把任务目标、用户约束、`working_memory` 快照、关键证据、允许工具和剩余预算收敛成统一交接结构。
+- [ ] 让 `CliRuntimeBootstrap` 能消费路由决策并生成 handoff 数据，但不在一期引入复杂多模型协作。
+- [ ] 为后续 `Agent Client Protocol (ACP)` 接入预留 adapter 边界，把协议映射留在 CLI 接入层，不让 `AgentLoop` 直接依赖协议细节。
+
+### Task 19: 演示与收尾
 
 **Files:**
 - Create: `README.md`
@@ -262,9 +329,14 @@
 - [ ] 把当前进度和后续里程碑同步回 spec / plan。
 - [ ] 保证每次阶段结束都能通过 `mvn test`。
 
-### Phase 2 Preview: 工具知识与多 Agent
+### Phase 2 Preview: Web 控制台、云端 Sandbox 与多 Agent
 
 **方向，不纳入一期关键路径：**
+- 真实云端 sandbox backend：通过执行后端接口接入 `E2B` 或等价能力，不改变上层工具协议
+- 薄 Web Session Console：优先展示 session / trace / approval / diff summary，不做 IDE clone
+- 显式模型自动路由：优先做可解释策略，再考虑动态成本 / 质量权衡
+- 结构化 handoff packet：跨模型、跨角色和会话恢复共用同一份交接语义
+- ACP adapter：优先支持 editor / IDE ↔ agent 的接入，不把协议逻辑侵入 runtime 核心
 - 工具手册按需加载：把单工具长说明从基础 prompt 中移出，仅在需要时注入
 - 文档型 Agentic RAG：只检索项目文档与规范，不替代源码工具
 - 多 Agent 角色分工：`Explore / Plan / Worker / Verification`
@@ -275,6 +347,11 @@
 - Hook 体系扩展：把 trace、checkpoint、telemetry、response finalize 挂到统一生命周期
 
 - [ ] 二期实现工具手册时，优先做 `tool_search` 或等价的按需加载机制，不把所有工具说明全文塞进 system prompt。
+- [ ] 二期接入真实云端 sandbox 时，坚持只通过 execution backend 接入，不允许在 `RunCommandTool` 内部私接 SDK，也不允许失败后静默回退到本地执行。
+- [ ] 二期若补 Web 控制台，优先消费现有 session / trace / approval / diff summary 数据，不让 server 变成远程执行器。
+- [ ] 二期做模型自动路由时，坚持先落可解释静态策略和可观测 trace，再考虑动态学习或复杂启发式。
+- [ ] 二期做 handoff 时，优先复用统一 `HandoffPacket`，不允许靠拷贝整段原始历史实现“交接”。
+- [ ] 二期若接 ACP，优先接入 editor / IDE 场景，不让协议适配层拥有独立运行时语义。
 - [ ] 二期引入多 Agent 时，先落只读角色与 verification，再考虑可写 worker。
 - [ ] 保持多 Agent 编排扁平化，避免递归派工导致成本、责任和调试复杂度失控。
 - [ ] 二期若引入耐久记忆，优先做 append-only 历史和可审计恢复，不做人格化大而全记忆系统。
