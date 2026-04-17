@@ -2,23 +2,23 @@ package com.repopilot.core.prompt;
 
 /**
  * 显式表达 system prompt 的边界。
- * 静态宪法与动态政策会拼成稳定的 system prompt，
+ * 基础指令与会话指令会拼成稳定的 system prompt，
  * 高频 runtime metadata 则保持为独立上下文块，避免污染稳定前缀。
  */
 public record SystemPromptBoundary(
-        String staticConstitution,
-        String dynamicPolicy,
+        String baseInstructions,
+        String sessionInstructions,
         String runtimeContextBlock
 ) {
 
     public SystemPromptBoundary {
-        staticConstitution = requireNonBlank(staticConstitution, "Static constitution must not be blank.");
-        dynamicPolicy = requireNonBlank(dynamicPolicy, "Dynamic policy must not be blank.");
+        baseInstructions = requireNonBlank(baseInstructions, "Base instructions must not be blank.");
+        sessionInstructions = requireNonBlank(sessionInstructions, "Session instructions must not be blank.");
         runtimeContextBlock = runtimeContextBlock == null ? "" : runtimeContextBlock.strip();
     }
 
     public String systemPrompt() {
-        return staticConstitution + System.lineSeparator() + System.lineSeparator() + dynamicPolicy;
+        return baseInstructions + System.lineSeparator() + System.lineSeparator() + sessionInstructions;
     }
 
     public boolean hasRuntimeContextBlock() {

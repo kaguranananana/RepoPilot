@@ -36,7 +36,7 @@ class InteractiveRuntimeRunnerTest {
         assertEquals(2, initialHistory.size());
         assertEquals(MessageRole.SYSTEM, initialHistory.get(0).role());
         assertEquals(MessageRole.SYSTEM, initialHistory.get(1).role());
-        assertTrue(initialHistory.get(0).content().contains("# 静态宪法"));
+        assertTrue(initialHistory.get(0).content().contains("# 基础指令"));
         assertTrue(initialHistory.get(1).content().contains("# 运行时上下文"));
     }
 

@@ -7,16 +7,16 @@ import java.util.Map;
 import java.util.Objects;
 
 /**
- * 负责把稳定宪法、动态政策和 runtime metadata 组装成清晰边界。
+ * 负责把稳定基础指令、会话指令和 runtime metadata 组装成清晰边界。
  * 当前版本先把 prompt 分成三块：
- * 1. 静态宪法
- * 2. 动态政策
+ * 1. 基础指令
+ * 2. 会话指令
  * 3. 独立 runtime context
  */
 public class SystemPromptBuilder {
 
-    private static final String STATIC_CONSTITUTION = """
-            # 静态宪法
+    private static final String BASE_INSTRUCTIONS = """
+            # 基础指令
             - 你是 RepoPilot，一个面向本地代码仓研发任务的编码代理。
             - 你的判断必须基于真实工作区证据、工具结果和当前会话上下文，不得捏造事实。
             - 只能使用当前暴露的工具能力，并遵守权限、审查与治理边界。
@@ -28,13 +28,13 @@ public class SystemPromptBuilder {
         Objects.requireNonNull(dynamicPromptContext, "dynamicPromptContext must not be null.");
 
         return new SystemPromptBoundary(
-                STATIC_CONSTITUTION,
-                buildDynamicPolicy(dynamicPromptContext),
+                BASE_INSTRUCTIONS,
+                buildSessionInstructions(dynamicPromptContext),
                 buildRuntimeContextBlock(dynamicPromptContext.runtimeMetadata())
         );
     }
 
-    private String buildDynamicPolicy(DynamicPromptContext dynamicPromptContext) {
+    private String buildSessionInstructions(DynamicPromptContext dynamicPromptContext) {
         List<String> sections = new ArrayList<>();
 
         appendTextSection(sections, "## 会话前导", dynamicPromptContext.sessionPreamble());
@@ -44,10 +44,10 @@ public class SystemPromptBuilder {
         appendToolSection(sections, dynamicPromptContext.availableTools());
 
         if (sections.isEmpty()) {
-            return "# 动态政策" + System.lineSeparator() + "当前没有额外动态政策。";
+            return "# 会话指令" + System.lineSeparator() + "当前没有额外会话指令。";
         }
 
-        return "# 动态政策" + System.lineSeparator() + System.lineSeparator()
+        return "# 会话指令" + System.lineSeparator() + System.lineSeparator()
                 + String.join(System.lineSeparator() + System.lineSeparator(), sections);
     }
 
@@ -98,7 +98,7 @@ public class SystemPromptBuilder {
         StringBuilder builder = new StringBuilder("## 可用工具子集");
         for (ToolDefinition toolDefinition : availableTools) {
             // 工具子集单独成段，
-            // 让模型看到“这轮到底允许用哪些工具”，同时不把信息混进静态宪法。
+            // 让模型看到“这轮到底允许用哪些工具”，同时不把信息混进基础指令。
             builder.append(System.lineSeparator())
                     .append("- ")
                     .append(toolDefinition.name())

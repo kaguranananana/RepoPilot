@@ -80,7 +80,7 @@ public interface CliRuntimeBootstrap {
             ToolRegistry toolRegistry = new ToolRegistry();
             BuiltinToolRegistrar.registerAll(toolRegistry, Path.of("").toAbsolutePath().normalize());
 
-            // 再把稳定宪法、动态政策和运行时 metadata 分块组装，
+            // 再把稳定基础指令、会话指令和运行时 metadata 分块组装，
             // 避免把 sessionId、时间等高频信息直接混进稳定 system prompt 前缀。
             SystemPromptBoundary promptBoundary = systemPromptBuilder.build(
                     buildDynamicPromptContext(sessionSummary, toolRegistry)
@@ -130,7 +130,7 @@ public interface CliRuntimeBootstrap {
             List<ConversationMessage> messages = new ArrayList<>();
 
             // 第一条 SYSTEM 消息放稳定 system prompt，
-            // 这里包含静态宪法和动态政策，但不包含高频 runtime metadata。
+            // 这里包含基础指令和会话指令，但不包含高频 runtime metadata。
             messages.add(new ConversationMessage(MessageRole.SYSTEM, promptBoundary.systemPrompt()));
 
             // 第二条 SYSTEM 消息单独承载 runtime context block，

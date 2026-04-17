@@ -11,7 +11,7 @@ import java.util.Objects;
 /**
  * 动态 prompt 输入上下文。
  * 这部分内容会随着 session、工作区和工具子集变化，
- * 因此必须和稳定的静态宪法分开建模。
+ * 因此必须和稳定的基础指令分开建模。
  */
 public record DynamicPromptContext(
         String sessionPreamble,

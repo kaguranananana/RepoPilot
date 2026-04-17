@@ -137,7 +137,7 @@ public final class DefaultInteractiveRuntimeRunner implements InteractiveRuntime
     private List<ConversationMessage> buildInitialMessages(SystemPromptBoundary promptBoundary) {
         List<ConversationMessage> messages = new ArrayList<>();
 
-        // 第一条 SYSTEM 固定承载稳定宪法和动态政策，
+        // 第一条 SYSTEM 固定承载稳定基础指令和会话指令，
         // 这样后续每一轮都能复用同一个 prompt 前缀。
         messages.add(new ConversationMessage(MessageRole.SYSTEM, promptBoundary.systemPrompt()));
 
