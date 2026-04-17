@@ -15,7 +15,7 @@ import java.util.regex.Pattern;
  * 负责从工作区根目录读取本地环境变量文件。
  * 当前只支持最小且明确的 `.env.local` 语法：`KEY=VALUE`。
  */
-final class LocalEnvironmentMapLoader {
+public final class LocalEnvironmentMapLoader {
 
     private static final String DOT_ENV_LOCAL_FILE_NAME = ".env.local";
     private static final Pattern ENVIRONMENT_KEY_PATTERN = Pattern.compile("[A-Za-z_][A-Za-z0-9_]*");
@@ -23,7 +23,7 @@ final class LocalEnvironmentMapLoader {
     private LocalEnvironmentMapLoader() {
     }
 
-    static Map<String, String> load(Path workspaceRoot, Map<String, String> processEnvironment) {
+    public static Map<String, String> load(Path workspaceRoot, Map<String, String> processEnvironment) {
         Objects.requireNonNull(workspaceRoot, "workspaceRoot must not be null.");
         Objects.requireNonNull(processEnvironment, "processEnvironment must not be null.");
 

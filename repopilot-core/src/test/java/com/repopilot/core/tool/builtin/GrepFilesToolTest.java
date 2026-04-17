@@ -52,4 +52,18 @@ class GrepFilesToolTest {
         assertEquals(ToolExecutionResult.Status.RECOVERABLE_ERROR, result.status());
         assertEquals("无效的正则表达式: [", result.output());
     }
+
+    @Test
+    void shouldSkipNonUtf8FilesAndContinueSearchingTextFiles() throws Exception {
+        Files.writeString(workspaceRoot.resolve("README.md"), "标题\nTODO 补文档\n");
+        Path binaryFile = workspaceRoot.resolve("build/output.class");
+        Files.createDirectories(binaryFile.getParent());
+        Files.write(binaryFile, new byte[] {(byte) 0xC3, (byte) 0x28, (byte) 0xFF});
+
+        ToolHandler tool = new GrepFilesTool(workspaceRoot);
+        ToolExecutionResult result = tool.execute(Map.of("pattern", "TODO"));
+
+        assertEquals(ToolExecutionResult.Status.SUCCESS, result.status());
+        assertEquals("README.md:2:TODO 补文档", result.output());
+    }
 }

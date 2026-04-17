@@ -1,11 +1,14 @@
 package com.repopilot.cli;
 
 import com.repopilot.cli.command.RunCommand;
+import com.repopilot.cli.interactive.InteractiveCliSession;
+import java.util.Objects;
 import picocli.CommandLine.Command;
 
 /**
- * CLI 模块的最小根命令。
- * 阶段 0 先把命令入口立起来，后续再逐步挂接 run、status、sessions 等子命令。
+ * CLI 模块根命令。
+ * 默认直接进入交互模式，
+ * 同时继续保留显式 `run` 子命令，方便做单次运行与对照测试。
  */
 @Command(
         name = "repopilot",
@@ -17,9 +20,27 @@ import picocli.CommandLine.Command;
 )
 public class RepoPilotCliCommand implements Runnable {
 
+    private final InteractiveCliStarter interactiveCliStarter;
+
+    public RepoPilotCliCommand() {
+        this(() -> InteractiveCliSession.createDefault().start());
+    }
+
+    RepoPilotCliCommand(InteractiveCliStarter interactiveCliStarter) {
+        this.interactiveCliStarter = Objects.requireNonNull(
+                interactiveCliStarter,
+                "interactiveCliStarter must not be null."
+        );
+    }
+
     @Override
     public void run() {
-        // 阶段 0 故意保持最小实现，避免在骨架阶段提前混入业务逻辑。
-        System.out.println("RepoPilot CLI skeleton is ready.");
+        interactiveCliStarter.start();
+    }
+
+    @FunctionalInterface
+    interface InteractiveCliStarter {
+
+        void start();
     }
 }

@@ -163,7 +163,7 @@ public interface CliRuntimeBootstrap {
 
         private final CliModelConfig modelConfig;
 
-        EnvironmentBackedModelAdapterFactory(Map<String, String> environment) {
+        public EnvironmentBackedModelAdapterFactory(Map<String, String> environment) {
             this.modelConfig = CliModelConfig.fromEnvironment(environment);
         }
 

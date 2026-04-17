@@ -4,6 +4,7 @@ import com.repopilot.core.tool.ToolExecutionResult;
 import com.repopilot.core.tool.ToolHandler;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
+import java.nio.charset.CharacterCodingException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -88,6 +89,11 @@ public final class GrepFilesTool implements ToolHandler {
         List<String> lines;
         try {
             lines = Files.readAllLines(filePath, StandardCharsets.UTF_8);
+        } catch (CharacterCodingException exception) {
+            // 这个工具的职责是搜索 UTF-8 文本文件，
+            // 因此遇到无法按 UTF-8 解码的文件时，
+            // 直接把它视为“非目标文本文件”并跳过，而不是把整轮搜索打成致命失败。
+            return;
         } catch (IOException exception) {
             throw new GrepSearchIOException(exception);
         }
