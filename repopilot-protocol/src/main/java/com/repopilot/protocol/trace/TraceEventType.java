@@ -8,6 +8,7 @@ package com.repopilot.protocol.trace;
 public enum TraceEventType {
     SESSION_CREATED,
     USER_MESSAGE_RECEIVED,
+    MODEL_CALL_REQUESTED,
     MODEL_RESPONSE_RECEIVED,
     TOOL_CALL_REQUESTED,
     TOOL_CALL_COMPLETED,
@@ -16,4 +17,3 @@ public enum TraceEventType {
     DIFF_REVIEW_GENERATED,
     SESSION_STATUS_CHANGED
 }
-

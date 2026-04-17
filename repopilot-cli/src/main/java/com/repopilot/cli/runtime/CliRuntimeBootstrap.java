@@ -11,17 +11,18 @@ import com.repopilot.core.model.ModelResponse;
 import com.repopilot.core.prompt.DynamicPromptContext;
 import com.repopilot.core.prompt.SystemPromptBoundary;
 import com.repopilot.core.prompt.SystemPromptBuilder;
+import com.repopilot.core.trace.TracePublisher;
 import com.repopilot.core.tool.ToolDefinition;
 import com.repopilot.core.tool.builtin.BuiltinToolRegistrar;
 import com.repopilot.core.tool.ToolRegistry;
 import com.repopilot.protocol.session.SessionSummary;
+import java.nio.file.Path;
 import java.time.Clock;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
-import java.nio.file.Path;
 
 /**
  * CLI 侧 runtime 引导器。
@@ -31,7 +32,11 @@ import java.nio.file.Path;
 @FunctionalInterface
 public interface CliRuntimeBootstrap {
 
-    String run(SessionSummary sessionSummary, String prompt);
+    String run(SessionSummary sessionSummary, String prompt, TracePublisher tracePublisher);
+
+    default String run(SessionSummary sessionSummary, String prompt) {
+        return run(sessionSummary, prompt, TracePublisher.noop());
+    }
 
     static CliRuntimeBootstrap createDefault() {
         // 默认入口固定从当前工作区根目录读取 `.env.local`，
@@ -70,8 +75,9 @@ public interface CliRuntimeBootstrap {
         }
 
         @Override
-        public String run(SessionSummary sessionSummary, String prompt) {
+        public String run(SessionSummary sessionSummary, String prompt, TracePublisher tracePublisher) {
             Objects.requireNonNull(sessionSummary, "sessionSummary must not be null.");
+            Objects.requireNonNull(tracePublisher, "tracePublisher must not be null.");
             String safePrompt = requireNonBlank(prompt, "prompt must not be blank.");
 
             // 先建立本轮可见的最小工具集合。
@@ -88,7 +94,7 @@ public interface CliRuntimeBootstrap {
 
             // 最后把拼好的消息列表送进 AgentLoop，
             // 让 CLI 到 core 的一次最小调用真正走过统一运行时入口。
-            AgentLoop agentLoop = new AgentLoop(toolRegistry);
+            AgentLoop agentLoop = new AgentLoop(toolRegistry, tracePublisher);
             AgentLoopResult result = agentLoop.run(new AgentLoopRequest(
                     modelAdapterFactory.create(sessionSummary, toolRegistry.list()),
                     buildMessages(promptBoundary, safePrompt),

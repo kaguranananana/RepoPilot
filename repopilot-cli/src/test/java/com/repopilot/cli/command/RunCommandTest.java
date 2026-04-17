@@ -11,6 +11,8 @@ import java.io.IOException;
 import java.io.PrintWriter;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
+import java.util.List;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -21,11 +23,13 @@ class RunCommandTest {
     private HttpServer httpServer;
     private String baseUrl;
     private String lastRequestBody;
+    private List<String> traceRequestBodies;
 
     @BeforeEach
     void setUp() throws IOException {
         httpServer = HttpServer.create(new InetSocketAddress(0), 0);
         baseUrl = "http://127.0.0.1:" + httpServer.getAddress().getPort();
+        traceRequestBodies = new ArrayList<>();
     }
 
     @AfterEach
@@ -57,6 +61,22 @@ class RunCommandTest {
                     }
                     """);
         });
+        httpServer.createContext("/api/sessions/session-001/trace-events", exchange -> {
+            assertEquals("POST", exchange.getRequestMethod());
+            traceRequestBodies.add(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
+
+            respondJson(exchange, """
+                    {
+                      "traceId": "trace-001",
+                      "sessionId": "session-001",
+                      "type": "MODEL_CALL_REQUESTED",
+                      "source": "cli",
+                      "summary": "trace accepted",
+                      "occurredAt": "2026-04-15T08:00:01Z",
+                      "metadata": {}
+                    }
+                    """);
+        });
         httpServer.start();
 
         ByteArrayOutputStream outputStream = new ByteArrayOutputStream();
@@ -72,6 +92,10 @@ class RunCommandTest {
         assertEquals(0, exitCode);
         assertTrue(lastRequestBody.contains("\"workspaceId\":\"workspace-001\""));
         assertTrue(lastRequestBody.contains("\"requestedBy\":\"cli\""));
+        assertEquals(2, traceRequestBodies.size());
+        assertTrue(traceRequestBodies.get(0).contains("\"type\":\"MODEL_CALL_REQUESTED\""));
+        assertTrue(traceRequestBodies.get(1).contains("\"type\":\"MODEL_RESPONSE_RECEIVED\""));
+        assertTrue(traceRequestBodies.get(0).contains("\"source\":\"cli\""));
         assertEquals(
                 "RepoPilot runtime accepted prompt for session session-001: 分析 pom.xml",
                 outputStream.toString(StandardCharsets.UTF_8).trim()
