@@ -28,7 +28,7 @@ public final class InteractiveCliSession {
     private static final String HELP_COMMAND = "/help";
     private static final String RESET_COMMAND = "/reset";
 
-    private final BufferedReader inputReader;
+    private final InteractiveLineInput lineInput;
     private final PrintWriter outputWriter;
     private final SessionClient sessionClient;
     private final InteractiveCliConfig config;
@@ -43,18 +43,22 @@ public final class InteractiveCliSession {
         Map<String, String> environment = LocalEnvironmentMapLoader.load(workspaceRoot, System.getenv());
         InteractiveCliConfig config = InteractiveCliConfig.fromEnvironment(environment);
         PrintWriter outputWriter = new PrintWriter(System.out, true, StandardCharsets.UTF_8);
+        BufferedReader inputReader = new BufferedReader(new InputStreamReader(System.in, StandardCharsets.UTF_8));
+        InteractiveLineInput lineInput = new InteractiveLineInput(inputReader);
 
         // 默认会话把标准输入输出直接接到终端，
         // 这样用户双击启动 main 后就能马上进入 REPL。
         return new InteractiveCliSession(
-                new BufferedReader(new InputStreamReader(System.in, StandardCharsets.UTF_8)),
+                lineInput,
                 outputWriter,
                 new DefaultHttpSessionApiClient(config.serverBaseUrl())::createSession,
                 config,
                 new DefaultInteractiveRuntimeRunner(
                         Clock.systemUTC(),
                         new CliRuntimeBootstrap.EnvironmentBackedModelAdapterFactory(environment),
-                        8
+                        workspaceRoot,
+                        8,
+                        new TerminalApprovalHandler(lineInput, outputWriter)
                 ),
                 new ConsoleTraceObserver(outputWriter, config.traceLevel())
         );
@@ -68,7 +72,25 @@ public final class InteractiveCliSession {
             InteractiveRuntimeRunner runtimeRunner,
             ConsoleTraceObserver traceObserver
     ) {
-        this.inputReader = Objects.requireNonNull(inputReader, "inputReader must not be null.");
+        this(
+                new InteractiveLineInput(inputReader),
+                outputWriter,
+                sessionClient,
+                config,
+                runtimeRunner,
+                traceObserver
+        );
+    }
+
+    InteractiveCliSession(
+            InteractiveLineInput lineInput,
+            PrintWriter outputWriter,
+            SessionClient sessionClient,
+            InteractiveCliConfig config,
+            InteractiveRuntimeRunner runtimeRunner,
+            ConsoleTraceObserver traceObserver
+    ) {
+        this.lineInput = Objects.requireNonNull(lineInput, "lineInput must not be null.");
         this.outputWriter = Objects.requireNonNull(outputWriter, "outputWriter must not be null.");
         this.sessionClient = Objects.requireNonNull(sessionClient, "sessionClient must not be null.");
         this.config = Objects.requireNonNull(config, "config must not be null.");
@@ -150,7 +172,9 @@ public final class InteractiveCliSession {
         try {
             outputWriter.print("repopilot >> ");
             outputWriter.flush();
-            return inputReader.readLine();
+            // 统一通过共享输入协调器读取，
+            // 这样审批阶段回推的那一行普通输入才能在这里被继续消费。
+            return lineInput.readLine();
         } catch (IOException exception) {
             throw new IllegalStateException("Failed to read interactive input.", exception);
         }

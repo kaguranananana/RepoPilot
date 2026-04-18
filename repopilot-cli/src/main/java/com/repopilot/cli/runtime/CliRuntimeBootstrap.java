@@ -11,10 +11,13 @@ import com.repopilot.core.model.ModelResponse;
 import com.repopilot.core.prompt.DynamicPromptContext;
 import com.repopilot.core.prompt.SystemPromptBoundary;
 import com.repopilot.core.prompt.SystemPromptBuilder;
+import com.repopilot.core.permission.WorkspacePermissionPolicy;
+import com.repopilot.core.review.DiffReviewService;
 import com.repopilot.core.trace.TracePublisher;
 import com.repopilot.core.tool.ToolDefinition;
 import com.repopilot.core.tool.builtin.BuiltinToolRegistrar;
 import com.repopilot.core.tool.ToolRegistry;
+import com.repopilot.core.tool.governance.GovernedToolExecutor;
 import com.repopilot.protocol.session.SessionSummary;
 import java.nio.file.Path;
 import java.time.Clock;
@@ -79,12 +82,18 @@ public interface CliRuntimeBootstrap {
             Objects.requireNonNull(sessionSummary, "sessionSummary must not be null.");
             Objects.requireNonNull(tracePublisher, "tracePublisher must not be null.");
             String safePrompt = requireNonBlank(prompt, "prompt must not be blank.");
+            Path workspaceRoot = Path.of("").toAbsolutePath().normalize();
 
             // 先建立本轮可见的最小工具集合。
             // 这里显式把第一批内置工具注册进来，
             // 让 dynamic prompt 和后续运行时执行链路看到的是同一套真实能力。
             ToolRegistry toolRegistry = new ToolRegistry();
-            BuiltinToolRegistrar.registerAll(toolRegistry, Path.of("").toAbsolutePath().normalize());
+            BuiltinToolRegistrar.registerAll(toolRegistry, workspaceRoot);
+            GovernedToolExecutor governedToolExecutor = new GovernedToolExecutor(
+                    toolRegistry,
+                    new WorkspacePermissionPolicy(workspaceRoot),
+                    new DiffReviewService(workspaceRoot)
+            );
 
             // 再把稳定基础指令、会话指令和运行时 metadata 分块组装，
             // 避免把 sessionId、时间等高频信息直接混进稳定 system prompt 前缀。
@@ -94,7 +103,7 @@ public interface CliRuntimeBootstrap {
 
             // 最后把拼好的消息列表送进 AgentLoop，
             // 让 CLI 到 core 的一次最小调用真正走过统一运行时入口。
-            AgentLoop agentLoop = new AgentLoop(toolRegistry, tracePublisher);
+            AgentLoop agentLoop = new AgentLoop(governedToolExecutor, tracePublisher);
             AgentLoopResult result = agentLoop.run(new AgentLoopRequest(
                     modelAdapterFactory.create(sessionSummary, toolRegistry.list()),
                     buildMessages(promptBoundary, safePrompt),

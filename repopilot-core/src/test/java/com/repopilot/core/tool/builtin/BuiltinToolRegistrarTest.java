@@ -24,7 +24,7 @@ class BuiltinToolRegistrarTest {
         BuiltinToolRegistrar.registerAll(toolRegistry, workspaceRoot);
 
         assertEquals(
-                List.of("read_file", "grep_files", "run_command"),
+                List.of("read_file", "grep_files", "write_file", "run_command"),
                 toolRegistry.list().stream().map(tool -> tool.name()).toList()
         );
         assertEquals(
@@ -32,12 +32,26 @@ class BuiltinToolRegistrarTest {
                 toolRegistry.list().get(0).parametersSchema().get("required")
         );
         assertEquals(
-                List.of("command"),
+                List.of("path", "content"),
                 toolRegistry.list().get(2).parametersSchema().get("required")
+        );
+        assertEquals(
+                List.of("command"),
+                toolRegistry.list().get(3).parametersSchema().get("required")
         );
 
         ToolExecutionResult result = toolRegistry.execute("read_file", Map.of("path", "README.md"));
         assertEquals(ToolExecutionResult.Status.SUCCESS, result.status());
         assertEquals("RepoPilot", result.output());
+
+        ToolExecutionResult writeResult = toolRegistry.execute(
+                "write_file",
+                Map.of(
+                        "path", "docs/generated.txt",
+                        "content", "第一行\n第二行\n"
+                )
+        );
+        assertEquals(ToolExecutionResult.Status.SUCCESS, writeResult.status());
+        assertEquals("第一行\n第二行\n", Files.readString(workspaceRoot.resolve("docs/generated.txt")));
     }
 }

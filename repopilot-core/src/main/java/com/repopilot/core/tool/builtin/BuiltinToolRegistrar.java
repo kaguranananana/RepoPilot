@@ -60,6 +60,28 @@ public final class BuiltinToolRegistrar {
                 new GrepFilesTool(workspaceRoot)
         );
 
+        // 再注册写文件工具，
+        // 让模型在明确审批通过后能够把产出真正落到工作区。
+        toolRegistry.register(
+                "write_file",
+                "向单个 UTF-8 文本文件写入完整内容",
+                Map.of(
+                        "type", "object",
+                        "properties", Map.of(
+                                "path", Map.of(
+                                        "type", "string",
+                                        "description", "要写入的文件路径"
+                                ),
+                                "content", Map.of(
+                                        "type", "string",
+                                        "description", "要写入文件的完整文本内容"
+                                )
+                        ),
+                        "required", List.of("path", "content")
+                ),
+                new WriteFileTool(workspaceRoot)
+        );
+
         // 最后注册命令工具，
         // 让模型在需要时读取构建、测试和系统命令的真实结果。
         toolRegistry.register(

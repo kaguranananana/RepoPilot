@@ -5,13 +5,17 @@ import com.repopilot.core.agent.AgentLoop;
 import com.repopilot.core.agent.AgentLoopObserver;
 import com.repopilot.core.agent.AgentLoopRequest;
 import com.repopilot.core.agent.AgentLoopResult;
+import com.repopilot.core.approval.ToolApprovalHandler;
 import com.repopilot.core.model.ConversationMessage;
 import com.repopilot.core.model.MessageRole;
 import com.repopilot.core.prompt.DynamicPromptContext;
 import com.repopilot.core.prompt.SystemPromptBoundary;
 import com.repopilot.core.prompt.SystemPromptBuilder;
+import com.repopilot.core.permission.WorkspacePermissionPolicy;
+import com.repopilot.core.review.DiffReviewService;
 import com.repopilot.core.tool.ToolRegistry;
 import com.repopilot.core.tool.builtin.BuiltinToolRegistrar;
+import com.repopilot.core.tool.governance.GovernedToolExecutor;
 import com.repopilot.protocol.session.SessionSummary;
 import java.nio.file.Path;
 import java.time.Clock;
@@ -33,6 +37,7 @@ public final class DefaultInteractiveRuntimeRunner implements InteractiveRuntime
     private final CliRuntimeBootstrap.ModelAdapterFactory modelAdapterFactory;
     private final Path workspaceRoot;
     private final int maxSteps;
+    private final ToolApprovalHandler toolApprovalHandler;
 
     public DefaultInteractiveRuntimeRunner(
             Clock clock,
@@ -44,7 +49,25 @@ public final class DefaultInteractiveRuntimeRunner implements InteractiveRuntime
                 new SystemPromptBuilder(),
                 modelAdapterFactory,
                 Path.of("").toAbsolutePath().normalize(),
-                maxSteps
+                maxSteps,
+                ToolApprovalHandler.denyAll()
+        );
+    }
+
+    DefaultInteractiveRuntimeRunner(
+            Clock clock,
+            CliRuntimeBootstrap.ModelAdapterFactory modelAdapterFactory,
+            Path workspaceRoot,
+            int maxSteps,
+            ToolApprovalHandler toolApprovalHandler
+    ) {
+        this(
+                clock,
+                new SystemPromptBuilder(),
+                modelAdapterFactory,
+                workspaceRoot,
+                maxSteps,
+                toolApprovalHandler
         );
     }
 
@@ -53,7 +76,8 @@ public final class DefaultInteractiveRuntimeRunner implements InteractiveRuntime
             SystemPromptBuilder systemPromptBuilder,
             CliRuntimeBootstrap.ModelAdapterFactory modelAdapterFactory,
             Path workspaceRoot,
-            int maxSteps
+            int maxSteps,
+            ToolApprovalHandler toolApprovalHandler
     ) {
         this.clock = Objects.requireNonNull(clock, "clock must not be null.");
         this.systemPromptBuilder = Objects.requireNonNull(systemPromptBuilder, "systemPromptBuilder must not be null.");
@@ -65,6 +89,7 @@ public final class DefaultInteractiveRuntimeRunner implements InteractiveRuntime
             throw new IllegalArgumentException("maxSteps must be greater than zero.");
         }
         this.maxSteps = maxSteps;
+        this.toolApprovalHandler = Objects.requireNonNull(toolApprovalHandler, "toolApprovalHandler must not be null.");
     }
 
     @Override
@@ -95,7 +120,13 @@ public final class DefaultInteractiveRuntimeRunner implements InteractiveRuntime
         // 前面的 SYSTEM / USER / ASSISTANT / TOOL 历史保持原样继续复用。
         messages.add(new ConversationMessage(MessageRole.USER, safePrompt));
 
-        AgentLoop agentLoop = new AgentLoop(toolRegistry, observer);
+        GovernedToolExecutor governedToolExecutor = new GovernedToolExecutor(
+                toolRegistry,
+                new WorkspacePermissionPolicy(workspaceRoot),
+                new DiffReviewService(workspaceRoot),
+                toolApprovalHandler
+        );
+        AgentLoop agentLoop = new AgentLoop(governedToolExecutor, observer);
         AgentLoopResult result = agentLoop.run(new AgentLoopRequest(
                 modelAdapterFactory.create(sessionSummary, toolRegistry.list()),
                 messages,

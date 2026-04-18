@@ -8,6 +8,8 @@
 
 **Tech Stack:** Java 17, Maven, Spring Boot 3, Jackson, Picocli, JDK HttpClient, JUnit 5
 
+**Task Completion Contract:** 自当前执行阶段起，任何未完成 task 在勾选完成前，都必须先跑完对应自动化验证，再提供一组可由用户在交互式终端亲自执行的验收命令或操作步骤，写清预期现象，并在该检查点暂停等待人工确认；如果 task 本身是内部整理、单独不可见，就继续补到最小可见 smoke path 后再算完成。
+
 ---
 
 ### Task 1: 多模块工程骨架
@@ -153,11 +155,11 @@
 - Create: `repopilot-cli/src/main/java/com/repopilot/cli/session/DefaultHttpTraceApiClient.java`
 - Create: `repopilot-core/src/test/java/com/repopilot/core/trace/TracePublishingAgentLoopTest.java`
 
-- [ ] 在模型调用前后发 trace。
-- [ ] 在工具调用前后发 trace。
-- [ ] 让工具 trace 明确记录 `SUCCESS / RECOVERABLE_ERROR / FATAL_ERROR` 三态，并保证 `FATAL_ERROR` 在中断主链路前也能被上报。
-- [ ] 把 trace 从 core 经 CLI 同步到 server。
-- [ ] 为后续 Hook 生命周期预留最小扩展点，不把 trace 上报硬编码成唯一实现。
+- [x] 在模型调用前后发 trace。
+- [x] 在工具调用前后发 trace。
+- [x] 让工具 trace 明确记录 `SUCCESS / RECOVERABLE_ERROR / FATAL_ERROR` 三态，并保证 `FATAL_ERROR` 在中断主链路前也能被上报。
+- [x] 把 trace 从 core 经 CLI 同步到 server。
+- [x] 为后续 Hook 生命周期预留最小扩展点，不把 trace 上报硬编码成唯一实现。
 
 ### Task 10: 工具治理流水线与权限策略
 
@@ -172,12 +174,12 @@
 - Create: `repopilot-core/src/test/java/com/repopilot/core/permission/WorkspacePermissionPolicyTest.java`
 - Create: `repopilot-core/src/test/java/com/repopilot/core/review/DiffReviewServiceTest.java`
 
-- [ ] 把工具执行从“直接调用 handler”升级为“校验 -> 权限 -> 执行 -> 结构化结果”的受治理流水线。
-- [ ] 权限决策遵循 `deny -> ask -> allow` 顺序，并默认 fail-closed。
-- [ ] 统一工具失败出口：由治理层把校验失败、权限拒绝、执行异常收敛成 `RECOVERABLE_ERROR` 或 `FATAL_ERROR`，避免 `AgentLoop` 同时消费多套错误协议。
-- [ ] 限制工具只能操作当前工作区，并给危险命令留出审批钩子。
-- [ ] 在写文件前生成 diff 摘要，防止模型直接写盘绕过审查。
-- [ ] 保持工具定义输出顺序稳定，避免动态工具集导致 prompt 抖动。
+- [x] 把工具执行从“直接调用 handler”升级为“校验 -> 权限 -> 执行 -> 结构化结果”的受治理流水线。
+- [x] 权限决策遵循 `deny -> ask -> allow` 顺序，并默认 fail-closed。
+- [x] 统一工具失败出口：由治理层把校验失败、权限拒绝、执行异常收敛成 `RECOVERABLE_ERROR` 或 `FATAL_ERROR`，避免 `AgentLoop` 同时消费多套错误协议。
+- [x] 限制工具只能操作当前工作区，并给危险命令留出审批钩子。
+- [x] 在写文件前生成 diff 摘要，防止模型直接写盘绕过审查。
+- [x] 保持工具定义输出顺序稳定，避免动态工具集导致 prompt 抖动。
 
 ### Task 11: 结构化 Short-Term Memory 与上下文压缩
 
@@ -198,6 +200,7 @@
 - [ ] 把更早的工具执行轨迹压缩为结构化摘要，而不是普通聊天总结。
 - [ ] 给压缩动作预留 trace 钩子，便于后续回放和调试。
 - [ ] 给后续 append-only 历史归档、会话恢复和 idle session auto-compact 预留数据结构接口。
+- [ ] 提供本 task 的交互式终端验收命令、预期现象与观察重点，并在人工确认后再勾选完成。
 
 ### Task 12: Skill 渐进式加载
 
@@ -214,6 +217,7 @@
 - [ ] 提供按名称加载完整 Skill 正文的能力。
 - [ ] 提供 Skill 附属脚本、模板、示例文档的按需递进加载能力。
 - [ ] 为后续 `global policy ∩ skill allowed-tools` 的工具约束模型预留扩展点。
+- [ ] 提供本 task 的交互式终端验收命令、预期现象与观察重点，并在人工确认后再勾选完成。
 
 ### Task 13: 命令执行后端抽象与 Sandbox 预留
 
@@ -235,6 +239,7 @@
 - [ ] 让 `RunCommandTool` 只负责工具协议和结果封装，不再直接管理本地进程生命周期。
 - [ ] 在 CLI/bootstrap 层明确选择执行 backend，并保证默认行为是显式配置而不是隐式 fallback。
 - [ ] 为后续 `run_code` 与真实云端 sandbox backend（如 `E2B`）预留接口，但一期不接入真实远程服务。
+- [ ] 提供本 task 的交互式终端验收命令、预期现象与观察重点，并在人工确认后再勾选完成。
 
 ### Task 14: Background Task
 
@@ -247,6 +252,7 @@
 - [ ] 支持下一轮推理前读取后台完成结果。
 - [ ] 复用命令执行后端抽象，避免后台任务再维护一套独立进程管理逻辑。
 - [ ] 为后续 task system 预留扩展点。
+- [ ] 提供本 task 的交互式终端验收命令、预期现象与观察重点，并在人工确认后再勾选完成。
 
 ### Task 15: 最小评估链路
 
@@ -264,6 +270,7 @@
 - [ ] 统计至少 `tool_call_valid_rate`、`patch_apply_success_rate`、`build_or_test_pass_rate`、`task_success_rate`、`avg_steps`、`avg_duration`。
 - [ ] 提供命令行评估入口，能够重复执行同一组任务并输出结构化报告。
 - [ ] 保持评估链路独立于主 runtime，避免为了评估污染正常执行路径。
+- [ ] 提供本 task 的交互式终端验收命令、预期现象与观察重点，并在人工确认后再勾选完成。
 
 ### Task 16: 持久化替换
 
@@ -277,6 +284,7 @@
 - [ ] 把内存 session / trace 存储替换为 JPA。
 - [ ] 接入 PostgreSQL 与 Flyway。
 - [ ] 保证 controller 层接口不变。
+- [ ] 提供本 task 的交互式终端验收命令、预期现象与观察重点，并在人工确认后再勾选完成。
 
 ### Task 17: SSE 推送与实时事件流
 
@@ -290,6 +298,7 @@
 - [ ] 保持 SSE 事件模型复用现有 `TraceEventRecord` 语义，不再发明第二套事件协议。
 - [ ] 保证已有 HTTP 查询接口仍然可用，SSE 只作为增量实时通道存在。
 - [ ] 为后续 Web 控制台或 IDE 订阅实时事件预留稳定入口。
+- [ ] 提供本 task 的交互式终端验收命令、预期现象与观察重点，并在人工确认后再勾选完成。
 
 ### Task 18: 模型路由、Handoff 与 ACP 接入边界预留
 
@@ -315,6 +324,7 @@
 - [ ] 定义 `HandoffPacket`，把任务目标、用户约束、`working_memory` 快照、关键证据、允许工具和剩余预算收敛成统一交接结构。
 - [ ] 让 `CliRuntimeBootstrap` 能消费路由决策并生成 handoff 数据，但不在一期引入复杂多模型协作。
 - [ ] 为后续 `Agent Client Protocol (ACP)` 接入预留 adapter 边界，把协议映射留在 CLI 接入层，不让 `AgentLoop` 直接依赖协议细节。
+- [ ] 提供本 task 的交互式终端验收命令、预期现象与观察重点，并在人工确认后再勾选完成。
 
 ### Task 19: 演示与收尾
 
@@ -328,6 +338,7 @@
 - [ ] 补一份演示脚本。
 - [ ] 把当前进度和后续里程碑同步回 spec / plan。
 - [ ] 保证每次阶段结束都能通过 `mvn test`。
+- [ ] 提供本 task 的交互式终端验收命令、预期现象与观察重点，并在人工确认后再勾选完成。
 
 ### Phase 2 Preview: Web 控制台、云端 Sandbox 与多 Agent
 

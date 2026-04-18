@@ -128,6 +128,7 @@ public final class ConsoleTraceObserver implements AgentLoopObserver {
         return switch (toolCall.toolName()) {
             case "read_file" -> "path=" + arguments.getOrDefault("path", "");
             case "grep_files" -> renderGrepArgumentSummary(arguments);
+            case "write_file" -> "path=" + arguments.getOrDefault("path", "");
             case "run_command" -> "command=" + arguments.getOrDefault("command", "");
             default -> arguments.toString();
         };
@@ -162,6 +163,7 @@ public final class ConsoleTraceObserver implements AgentLoopObserver {
         return switch (toolName) {
             case "read_file" -> summarizeReadFile(output);
             case "grep_files" -> summarizeGrepFiles(output);
+            case "write_file" -> output;
             case "run_command" -> summarizeRunCommand(output);
             default -> output.length() + " chars";
         };

@@ -1,11 +1,19 @@
 package com.repopilot.cli.interactive;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import com.repopilot.cli.runtime.CliRuntimeBootstrap;
 import com.repopilot.core.agent.AgentLoopObserver;
 import com.repopilot.core.model.ConversationMessage;
+import com.repopilot.core.model.FinalModelResponse;
 import com.repopilot.core.model.MessageRole;
+import com.repopilot.core.model.ModelAdapter;
+import com.repopilot.core.model.ModelResponse;
+import com.repopilot.core.model.ToolCall;
+import com.repopilot.core.model.ToolCallModelResponse;
+import com.repopilot.core.tool.ToolDefinition;
 import com.repopilot.protocol.session.CreateSessionRequest;
 import com.repopilot.protocol.session.SessionStatus;
 import com.repopilot.protocol.session.SessionSummary;
@@ -14,13 +22,20 @@ import java.io.ByteArrayOutputStream;
 import java.io.PrintWriter;
 import java.io.StringReader;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
 class InteractiveCliSessionTest {
+
+    @TempDir
+    Path workspaceRoot;
 
     @Test
     void shouldCreateSessionRunPromptAndExit() {
@@ -128,6 +143,80 @@ class InteractiveCliSessionTest {
         assertTrue(outputStream.toString(StandardCharsets.UTF_8).contains("[assistant] 分析完成: 第二次"));
     }
 
+    @Test
+    void shouldApproveWriteFileInsideInteractiveSessionAndPersistFile() throws Exception {
+        RecordingSessionApiClient sessionApiClient = new RecordingSessionApiClient(List.of(
+                session("session-010", "workspace-001")
+        ));
+        ByteArrayOutputStream outputStream = new ByteArrayOutputStream();
+        PrintWriter outputWriter = new PrintWriter(outputStream, true, StandardCharsets.UTF_8);
+        InteractiveLineInput sharedInput = new InteractiveLineInput(
+                new BufferedReader(new StringReader("请写入文件\ny\n/exit\n"))
+        );
+        DefaultInteractiveRuntimeRunner runtimeRunner = new DefaultInteractiveRuntimeRunner(
+                java.time.Clock.fixed(Instant.parse("2026-04-16T07:00:00Z"), java.time.ZoneOffset.UTC),
+                new ScriptedWriteFileModelAdapterFactory(),
+                workspaceRoot,
+                8,
+                new TerminalApprovalHandler(sharedInput, outputWriter)
+        );
+
+        InteractiveCliSession session = new InteractiveCliSession(
+                sharedInput,
+                outputWriter,
+                sessionApiClient,
+                new InteractiveCliConfig("http://127.0.0.1:8080", "workspace-001"),
+                runtimeRunner,
+                new ConsoleTraceObserver(outputWriter)
+        );
+
+        session.start();
+
+        assertEquals("交互审批写入\n", Files.readString(workspaceRoot.resolve("docs/approved.txt")));
+        String output = outputStream.toString(StandardCharsets.UTF_8);
+        assertTrue(output.contains("[approval] tool=write_file"));
+        assertTrue(output.contains("DIFF_REVIEW"));
+        assertTrue(output.contains("Approve? [y/N]:"));
+        assertTrue(output.contains("[tool] write_file path=docs/approved.txt"));
+        assertTrue(output.contains("[assistant] 写入完成"));
+    }
+
+    @Test
+    void shouldKeepApprovalPendingUntilExplicitYesOrNo() throws Exception {
+        RecordingSessionApiClient sessionApiClient = new RecordingSessionApiClient(List.of(
+                session("session-011", "workspace-001")
+        ));
+        ByteArrayOutputStream outputStream = new ByteArrayOutputStream();
+        PrintWriter outputWriter = new PrintWriter(outputStream, true, StandardCharsets.UTF_8);
+        InteractiveLineInput sharedInput = new InteractiveLineInput(
+                new BufferedReader(new StringReader("请修改示例文件\n2. 把审批结果改成“用户在终端输入 y 后通过”\ny\n/exit\n"))
+        );
+        DefaultInteractiveRuntimeRunner runtimeRunner = new DefaultInteractiveRuntimeRunner(
+                java.time.Clock.fixed(Instant.parse("2026-04-16T07:00:00Z"), java.time.ZoneOffset.UTC),
+                new ScriptedWriteFileModelAdapterFactory(),
+                workspaceRoot,
+                8,
+                new TerminalApprovalHandler(sharedInput, outputWriter)
+        );
+
+        InteractiveCliSession session = new InteractiveCliSession(
+                sharedInput,
+                outputWriter,
+                sessionApiClient,
+                new InteractiveCliConfig("http://127.0.0.1:8080", "workspace-001"),
+                runtimeRunner,
+                new ConsoleTraceObserver(outputWriter)
+        );
+
+        session.start();
+
+        assertEquals("交互审批写入\n", Files.readString(workspaceRoot.resolve("docs/approved.txt")));
+        String output = outputStream.toString(StandardCharsets.UTF_8);
+        assertTrue(output.contains("[approval] 当前正在等待审批，请输入 y/yes 或 n/no。"));
+        assertTrue(output.contains("[assistant] 写入完成"));
+        assertFalse(output.contains("[user] 2. 把审批结果改成“用户在终端输入 y 后通过”"));
+    }
+
     private static SessionSummary session(String sessionId, String workspaceId) {
         return new SessionSummary(
                 sessionId,
@@ -189,4 +278,34 @@ class InteractiveCliSessionTest {
             return new InteractiveTurnResult(nextHistory, "分析完成: " + prompt);
         }
     }
+
+    private static final class ScriptedWriteFileModelAdapterFactory implements CliRuntimeBootstrap.ModelAdapterFactory {
+
+        @Override
+        public ModelAdapter create(SessionSummary sessionSummary, List<ToolDefinition> availableTools) {
+            return new ModelAdapter() {
+
+                private int cursor;
+
+                @Override
+                public ModelResponse next(List<ConversationMessage> messages) {
+                    if (cursor == 0) {
+                        cursor += 1;
+                        return new ToolCallModelResponse(List.of(
+                                new ToolCall(
+                                        "call-1",
+                                        "write_file",
+                                        Map.of(
+                                                "path", "docs/approved.txt",
+                                                "content", "交互审批写入\n"
+                                        )
+                                )
+                        ));
+                    }
+                    return new FinalModelResponse("写入完成");
+                }
+            };
+        }
+    }
+
 }

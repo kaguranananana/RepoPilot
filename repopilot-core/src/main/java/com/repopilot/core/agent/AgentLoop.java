@@ -6,15 +6,19 @@ import com.repopilot.core.model.MessageRole;
 import com.repopilot.core.model.ModelResponse;
 import com.repopilot.core.model.ToolCall;
 import com.repopilot.core.model.ToolCallModelResponse;
+import com.repopilot.core.permission.PermissionPolicy;
+import com.repopilot.core.review.DiffReviewService;
 import com.repopilot.core.trace.TracePublisher;
 import com.repopilot.core.tool.ToolExecutionResult;
 import com.repopilot.core.tool.ToolRegistry;
+import com.repopilot.core.tool.governance.GovernedToolExecutor;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.nio.file.Path;
 import com.repopilot.protocol.trace.TraceEventType;
 
 /**
@@ -23,24 +27,44 @@ import com.repopilot.protocol.trace.TraceEventType;
  */
 public class AgentLoop {
 
-    private final ToolRegistry toolRegistry;
+    private final GovernedToolExecutor governedToolExecutor;
     private final AgentLoopObserver observer;
     private final TracePublisher tracePublisher;
 
     public AgentLoop(ToolRegistry toolRegistry) {
-        this(toolRegistry, AgentLoopObserver.noop(), TracePublisher.noop());
+        this(createDefaultGovernedToolExecutor(toolRegistry), AgentLoopObserver.noop(), TracePublisher.noop());
     }
 
     public AgentLoop(ToolRegistry toolRegistry, AgentLoopObserver observer) {
-        this(toolRegistry, observer, TracePublisher.noop());
+        this(createDefaultGovernedToolExecutor(toolRegistry), observer, TracePublisher.noop());
     }
 
     public AgentLoop(ToolRegistry toolRegistry, TracePublisher tracePublisher) {
-        this(toolRegistry, AgentLoopObserver.noop(), tracePublisher);
+        this(createDefaultGovernedToolExecutor(toolRegistry), AgentLoopObserver.noop(), tracePublisher);
     }
 
     public AgentLoop(ToolRegistry toolRegistry, AgentLoopObserver observer, TracePublisher tracePublisher) {
-        this.toolRegistry = Objects.requireNonNull(toolRegistry, "toolRegistry must not be null.");
+        this(createDefaultGovernedToolExecutor(toolRegistry), observer, tracePublisher);
+    }
+
+    public AgentLoop(GovernedToolExecutor governedToolExecutor) {
+        this(governedToolExecutor, AgentLoopObserver.noop(), TracePublisher.noop());
+    }
+
+    public AgentLoop(GovernedToolExecutor governedToolExecutor, AgentLoopObserver observer) {
+        this(governedToolExecutor, observer, TracePublisher.noop());
+    }
+
+    public AgentLoop(GovernedToolExecutor governedToolExecutor, TracePublisher tracePublisher) {
+        this(governedToolExecutor, AgentLoopObserver.noop(), tracePublisher);
+    }
+
+    public AgentLoop(
+            GovernedToolExecutor governedToolExecutor,
+            AgentLoopObserver observer,
+            TracePublisher tracePublisher
+    ) {
+        this.governedToolExecutor = Objects.requireNonNull(governedToolExecutor, "governedToolExecutor must not be null.");
         this.observer = Objects.requireNonNull(observer, "observer must not be null.");
         this.tracePublisher = Objects.requireNonNull(tracePublisher, "tracePublisher must not be null.");
     }
@@ -82,7 +106,7 @@ public class AgentLoop {
                     // 即使工具内部马上失败，控制面也能还原本次调用意图。
                     publishToolCallRequested(step + 1, toolCall);
                     ToolExecutionResult executionResult =
-                            toolRegistry.execute(toolCall.toolName(), toolCall.arguments());
+                            governedToolExecutor.execute(toolCall.toolName(), toolCall.arguments());
                     // 工具返回后立刻通知观察器，
                     // 即使结果是致命错误，也保证外层能先拿到真实失败信息。
                     observer.onToolExecutionFinished(step + 1, toolCall, executionResult);
@@ -203,5 +227,18 @@ public class AgentLoop {
                     "Fatal tool execution must not be formatted as a TOOL message."
             );
         };
+    }
+
+    private static GovernedToolExecutor createDefaultGovernedToolExecutor(ToolRegistry toolRegistry) {
+        Objects.requireNonNull(toolRegistry, "toolRegistry must not be null.");
+
+        // 这个默认装配主要服务于现有单元测试和最小构造入口，
+        // 因此只保证 AgentLoop 始终走治理流水线，
+        // 真实 CLI/runtime 会在外层显式传入工作区权限策略。
+        return new GovernedToolExecutor(
+                toolRegistry,
+                PermissionPolicy.allowAll(),
+                new DiffReviewService(Path.of("").toAbsolutePath().normalize())
+        );
     }
 }

@@ -16,7 +16,7 @@ public class ToolRegistry {
 
     private final Map<String, RegisteredTool> tools = new LinkedHashMap<>();
 
-    public synchronized void register(String name, String description, ToolHandler handler) {
+    public void register(String name, String description, ToolHandler handler) {
         register(name, description, Map.of(), handler);
     }
 
@@ -38,14 +38,42 @@ public class ToolRegistry {
         tools.put(name, new RegisteredTool(new ToolDefinition(name, description, parametersSchema), handler));
     }
 
-    public synchronized List<ToolDefinition> list() {
-        return tools.values().stream()
-                .map(RegisteredTool::definition)
-                .toList();
+    public List<ToolDefinition> list() {
+        synchronized (this) {
+            // ToolDefinition 的输出顺序必须稳定，
+            // 因此这里要在锁内完成整次遍历和快照生成，
+            // 避免 LinkedHashMap 在并发写入时让导出结果抖动。
+            return tools.values().stream()
+                    .map(RegisteredTool::definition)
+                    .toList();
+        }
     }
 
-    public synchronized ToolExecutionResult execute(String toolName, Map<String, String> arguments) {
-        RegisteredTool tool = tools.get(toolName);
+    public ToolDefinition requireDefinition(String toolName) {
+        requireNonBlank(toolName, "Tool name must not be blank.");
+
+        RegisteredTool tool;
+        synchronized (this) {
+            // 这里只需要在锁内把工具引用取出来，
+            // 取到不可变 record 后就没必要继续占着 registry 的全局锁。
+            tool = tools.get(toolName);
+        }
+        if (tool == null) {
+            throw new ToolNotFoundException(toolName);
+        }
+        return tool.definition();
+    }
+
+    public ToolExecutionResult execute(String toolName, Map<String, String> arguments) {
+        requireNonBlank(toolName, "Tool name must not be blank.");
+
+        RegisteredTool tool;
+        synchronized (this) {
+            // execute 的锁只保护 registry 查询本身，
+            // 真正的 handler 执行可能很慢，绝不能把整个执行过程都包进锁里，
+            // 否则 list()/requireDefinition() 这类只读操作也会被无谓阻塞。
+            tool = tools.get(toolName);
+        }
         if (tool == null) {
             throw new ToolNotFoundException(toolName);
         }
