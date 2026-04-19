@@ -33,6 +33,23 @@ class WorkspacePermissionPolicyTest {
     }
 
     @Test
+    void shouldAllowActivateSkillWithoutApproval() {
+        PermissionPolicy permissionPolicy = new WorkspacePermissionPolicy(workspaceRoot);
+
+        PermissionPolicy.PermissionDecision decision = permissionPolicy.evaluate(
+                new ToolDefinition(
+                        "activate_skill",
+                        "激活 Skill",
+                        Map.of("required", List.of("name"))
+                ),
+                Map.of("name", "debug")
+        );
+
+        assertEquals(PermissionPolicy.PermissionDisposition.ALLOW, decision.disposition());
+        assertTrue(decision.reason().contains("上下文"));
+    }
+
+    @Test
     void shouldDenyOutsideWorkspaceBeforeAskingForWriteApproval() {
         PermissionPolicy permissionPolicy = new WorkspacePermissionPolicy(workspaceRoot);
 

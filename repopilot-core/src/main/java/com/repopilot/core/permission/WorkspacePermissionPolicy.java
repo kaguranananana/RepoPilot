@@ -19,6 +19,9 @@ public final class WorkspacePermissionPolicy implements PermissionPolicy {
             "read_file",
             "grep_files"
     );
+    private static final Set<String> CONTEXT_TOOLS = Set.of(
+            "activate_skill"
+    );
     private static final Set<String> APPROVAL_REQUIRED_TOOLS = Set.of(
             "run_command",
             "write_file"
@@ -55,6 +58,13 @@ public final class WorkspacePermissionPolicy implements PermissionPolicy {
         // 保证主链路先把最安全、最确定的能力跑通。
         if (READ_ONLY_TOOLS.contains(toolDefinition.name())) {
             return PermissionDecision.allow("工具只读且作用域位于当前工作区内。");
+        }
+
+        // 上下文工具只会装配运行时消息，
+        // 不直接访问文件系统、写文件或执行命令，
+        // 因此允许它在治理链路中直接通过。
+        if (CONTEXT_TOOLS.contains(toolDefinition.name())) {
+            return PermissionDecision.allow("工具只修改当前会话上下文，不直接触碰工作区资源。");
         }
 
         // 未声明工具统一 fail-closed，
