@@ -291,6 +291,8 @@ source: project
 3. 重复激活不会重复注入正文
 4. 缺失 Skill、空任务文本和非法多 Skill 输入都有明确行为
 5. 不引入普通自然语言匹配 Skill 的隐式 heuristics
+6. 必须完成真实模型端到端验收：使用真实 Skill 文件、真实控制面、真实交互 CLI 和真实模型 provider，分别验证用户显式触发与模型 `activate_skill` 工具触发；trace 中必须能看到真实模型请求、`activate_skill` 工具调用成功、以及下一轮消息历史中的 `# Activated Skill`
+7. 如果真实模型端到端验收暴露权限策略、工具治理、prompt 暴露或上下文注入问题，本功能不能视为完成；必须修复根因并重新跑通真实模型验收
 
 ## 风险与后续演进
 

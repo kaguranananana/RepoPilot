@@ -10,6 +10,8 @@
 
 **Status:** 本计划覆盖的是“Skill 激活正文注入主链路”。当前阶段的后续高优先级不再写在这里继续横向追加，而是转入主计划中的两个收尾项：`Skill allowed-tools` 运行时治理与离线评测覆盖。
 
+**Real Model E2E Gate:** 本功能不能只靠单元测试、scripted `ModelAdapter` 或本地 `bootstrap` 假模型验收。完成前必须启动真实 `repopilot-server` 与交互 CLI，使用真实模型 provider 发起真实模型调用，并在 verbose trace 中确认 `activate_skill` 工具调用成功、工具结果回注成功、下一轮消息历史出现 `# Activated Skill`。如果真实模型验收失败，必须先修复根因并重新验收，不能把 task 标记为完成。
+
 ---
 
 ### Task 1: Skill 激活核心模型与服务
@@ -276,20 +278,23 @@ Expected: 全部 PASS，无回归失败。
 - [x] **Step 5: 更新本计划勾选状态，并补人工交互式验收说明**
 
 Manual acceptance:
-- 启动交互 CLI
-- 输入 `/debug`
-- 预期：终端返回 “Skill debug 已激活” 类确认文本，不发起模型回合
-- 再输入 `修复这个测试`
-- 预期：模型请求中带有 `# Activated Skill` 对应正文
-- 新建一个无显式触发的任务，让模型调用 `activate_skill`
-- 预期：先出现 `activate_skill` 工具调用，再在下一轮上下文中看到激活后的 Skill 正文
+- 准备真实 Skill 文件，例如用户级 `~/.repopilot/skills/debug/SKILL.md`。
+- 启动真实控制面：`mvn -f repopilot-server/pom.xml spring-boot:run`。
+- 启动交互 CLI，并设置 `REPOPILOT_TRACE_LEVEL=verbose`。
+- 用户显式触发路径：输入 `/debug`，预期终端返回 “Skill debug 已激活” 类确认文本，不发起模型回合。
+- 用户后续回合路径：再输入 `修复这个测试`，预期下一轮模型请求中带有 `# Activated Skill` 对应正文。
+- 同轮显式触发路径：输入 `/debug 修复这个测试`，预期同一轮先出现 `# Activated Skill`，再把 `修复这个测试` 作为真实 USER prompt。
+- 真实模型工具触发路径：切到真实模型 provider，输入“请先调用 activate_skill 工具激活 debug Skill，再继续回答”，预期 trace 中先出现 `activate_skill(name=debug)` 工具调用成功，再在下一轮上下文中看到激活后的 Skill 正文。
 
 **Acceptance:**
 - Command: `mvn -pl repopilot-core,repopilot-cli -am -Dsurefire.failIfNoSpecifiedTests=false -Dtest=SkillActivationServiceTest,ActivateSkillToolTest,AgentLoopSkillActivationTest,UserSkillCommandParserTest,InteractiveRuntimeRunnerTest,InteractiveCliSessionTest,ContextCompactorTest,CliRuntimeBootstrapTest,DeepSeekChatModelAdapterTest test`
 - Expected: `SkillActivationServiceTest`、`ActivateSkillToolTest`、`AgentLoopSkillActivationTest`、`UserSkillCommandParserTest`、`InteractiveRuntimeRunnerTest`、`InteractiveCliSessionTest`、`ContextCompactorTest`、`CliRuntimeBootstrapTest`、`DeepSeekChatModelAdapterTest` 全部通过。
 - Observe: 用户通过 `/skill-name` 或 `$skill-name` 可显式激活 Skill；模型可通过 `activate_skill` 工具显式请求激活；激活后的 `SKILL.md` 正文会以新的 `SYSTEM` 消息进入后续轮次；重复激活不会重复注入正文；压缩后仍保留已激活 Skill 的 `SYSTEM` 消息；不存在 Skill 时用户路径直接报错，模型路径收到 `RECOVERABLE_ERROR`。
+- Real Model E2E: 必须使用真实模型 provider 跑通上述真实模型工具触发路径；如果 trace 中没有出现成功的 `activate_skill` 工具调用和下一轮 `# Activated Skill`，本功能不算完成。
 
 **Execution Result:**
 - 2026-04-19 已按计划完成 Task 1-5。
 - 自动化验证已执行，上述 Acceptance 命令返回 `BUILD SUCCESS`。
-- 本轮未做真实人工终端验收；交互行为由 `InteractiveCliSessionTest` 与 `InteractiveRuntimeRunnerTest` 覆盖。
+- 真实端到端验收已补跑：真实 server + 真实交互 CLI + 真实用户级 `debug` Skill + 真实 DeepSeek 模型调用。验收过程中发现 `activate_skill` 被 `WorkspacePermissionPolicy` fail-closed 拒绝，已通过 `fix: allow skill activation tool in permission policy` 修复并重新验收通过。
+- 真实模型显式工具触发已通过：trace 中出现 `activate_skill(name=debug)` 工具调用成功，下一轮消息历史出现 `# Activated Skill`。
+- “模型弱提示下自主优先选择 Skill”不是当前稳定验收点；真实模型可能先选择其他工具。当前完成标准固定为显式真实模型工具触发链路成功。
