@@ -119,6 +119,14 @@ public final class DeepSeekChatModelAdapter implements ModelAdapter {
                     apiMessage.put("role", "system");
                     apiMessage.put("content", requireNonBlank(message.content(), "message content must not be blank."));
                 }
+                case WORKING_MEMORY, CONTEXT_SUMMARY -> {
+                    // DeepSeek 兼容接口并不认识 RepoPilot 的内部消息角色，
+                    // 所以这里显式把结构化上下文映射成 system 消息。
+                    // 这样它们仍然保持“运行时注入上下文”的语义，
+                    // 同时不会被伪装成用户真实输入。
+                    apiMessage.put("role", "system");
+                    apiMessage.put("content", requireNonBlank(message.content(), "message content must not be blank."));
+                }
                 case USER -> {
                     apiMessage.put("role", "user");
                     apiMessage.put("content", requireNonBlank(message.content(), "message content must not be blank."));

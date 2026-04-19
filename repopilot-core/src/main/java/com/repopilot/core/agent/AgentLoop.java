@@ -1,5 +1,9 @@
 package com.repopilot.core.agent;
 
+import com.repopilot.core.context.ContextCompactionPolicy;
+import com.repopilot.core.context.ContextCompactor;
+import com.repopilot.core.context.WorkingMemory;
+import com.repopilot.core.context.WorkingMemorySnapshot;
 import com.repopilot.core.model.ConversationMessage;
 import com.repopilot.core.model.FinalModelResponse;
 import com.repopilot.core.model.MessageRole;
@@ -30,33 +34,48 @@ public class AgentLoop {
     private final GovernedToolExecutor governedToolExecutor;
     private final AgentLoopObserver observer;
     private final TracePublisher tracePublisher;
+    private final ContextCompactor contextCompactor;
 
     public AgentLoop(ToolRegistry toolRegistry) {
-        this(createDefaultGovernedToolExecutor(toolRegistry), AgentLoopObserver.noop(), TracePublisher.noop());
+        this(
+                createDefaultGovernedToolExecutor(toolRegistry),
+                AgentLoopObserver.noop(),
+                TracePublisher.noop(),
+                defaultContextCompactor()
+        );
     }
 
     public AgentLoop(ToolRegistry toolRegistry, AgentLoopObserver observer) {
-        this(createDefaultGovernedToolExecutor(toolRegistry), observer, TracePublisher.noop());
+        this(createDefaultGovernedToolExecutor(toolRegistry), observer, TracePublisher.noop(), defaultContextCompactor());
     }
 
     public AgentLoop(ToolRegistry toolRegistry, TracePublisher tracePublisher) {
-        this(createDefaultGovernedToolExecutor(toolRegistry), AgentLoopObserver.noop(), tracePublisher);
+        this(createDefaultGovernedToolExecutor(toolRegistry), AgentLoopObserver.noop(), tracePublisher, defaultContextCompactor());
     }
 
     public AgentLoop(ToolRegistry toolRegistry, AgentLoopObserver observer, TracePublisher tracePublisher) {
-        this(createDefaultGovernedToolExecutor(toolRegistry), observer, tracePublisher);
+        this(createDefaultGovernedToolExecutor(toolRegistry), observer, tracePublisher, defaultContextCompactor());
+    }
+
+    public AgentLoop(
+            ToolRegistry toolRegistry,
+            AgentLoopObserver observer,
+            TracePublisher tracePublisher,
+            ContextCompactor contextCompactor
+    ) {
+        this(createDefaultGovernedToolExecutor(toolRegistry), observer, tracePublisher, contextCompactor);
     }
 
     public AgentLoop(GovernedToolExecutor governedToolExecutor) {
-        this(governedToolExecutor, AgentLoopObserver.noop(), TracePublisher.noop());
+        this(governedToolExecutor, AgentLoopObserver.noop(), TracePublisher.noop(), defaultContextCompactor());
     }
 
     public AgentLoop(GovernedToolExecutor governedToolExecutor, AgentLoopObserver observer) {
-        this(governedToolExecutor, observer, TracePublisher.noop());
+        this(governedToolExecutor, observer, TracePublisher.noop(), defaultContextCompactor());
     }
 
     public AgentLoop(GovernedToolExecutor governedToolExecutor, TracePublisher tracePublisher) {
-        this(governedToolExecutor, AgentLoopObserver.noop(), tracePublisher);
+        this(governedToolExecutor, AgentLoopObserver.noop(), tracePublisher, defaultContextCompactor());
     }
 
     public AgentLoop(
@@ -64,15 +83,27 @@ public class AgentLoop {
             AgentLoopObserver observer,
             TracePublisher tracePublisher
     ) {
+        this(governedToolExecutor, observer, tracePublisher, defaultContextCompactor());
+    }
+
+    public AgentLoop(
+            GovernedToolExecutor governedToolExecutor,
+            AgentLoopObserver observer,
+            TracePublisher tracePublisher,
+            ContextCompactor contextCompactor
+    ) {
         this.governedToolExecutor = Objects.requireNonNull(governedToolExecutor, "governedToolExecutor must not be null.");
         this.observer = Objects.requireNonNull(observer, "observer must not be null.");
         this.tracePublisher = Objects.requireNonNull(tracePublisher, "tracePublisher must not be null.");
+        this.contextCompactor = Objects.requireNonNull(contextCompactor, "contextCompactor must not be null.");
     }
 
     public AgentLoopResult run(AgentLoopRequest request) {
         List<ConversationMessage> messages = new ArrayList<>(request.messages());
+        WorkingMemory workingMemory = WorkingMemory.initialize(messages, contextCompactor.policy());
 
         for (int step = 0; step < request.maxSteps(); step++) {
+            messages = compactMessagesIfNeeded(step + 1, messages, workingMemory);
             // 每一轮 step 开始前先把当前消息快照暴露给观察器，
             // 这样 CLI 或 trace 层就能看到“模型即将基于什么上下文继续推理”。
             observer.onStepStarted(step + 1, List.copyOf(messages));
@@ -105,6 +136,7 @@ public class AgentLoop {
                     // 工具真正执行前就先把请求事件写出去，
                     // 即使工具内部马上失败，控制面也能还原本次调用意图。
                     publishToolCallRequested(step + 1, toolCall);
+                    workingMemory.recordToolCall(toolCall);
                     ToolExecutionResult executionResult =
                             governedToolExecutor.execute(toolCall.toolName(), toolCall.arguments());
                     // 工具返回后立刻通知观察器，
@@ -113,6 +145,7 @@ public class AgentLoop {
                     // 工具一返回就立即上报完成事件，
                     // 尤其 FATAL_ERROR 必须先落地，再中断主链路。
                     publishToolCallCompleted(step + 1, toolCall, executionResult);
+                    workingMemory.recordToolResult(toolCall, executionResult);
 
                     // 致命错误说明主链路已经失真，必须立刻暴露真实错误，
                     // 不能继续伪装成一条普通 TOOL 消息喂给下一轮模型。
@@ -136,6 +169,39 @@ public class AgentLoop {
         throw new AgentLoopLimitExceededException(request.maxSteps());
     }
 
+    private List<ConversationMessage> compactMessagesIfNeeded(
+            int stepNumber,
+            List<ConversationMessage> messages,
+            WorkingMemory workingMemory
+    ) {
+        // 先按显式阈值判断是否需要压缩，
+        // 没超过阈值就直接沿用原始高保真窗口，避免无意义地改写上下文。
+        if (!contextCompactor.policy().shouldCompact(messages)) {
+            return messages;
+        }
+
+        // 这里先算出当前高保真消息总量，
+        // 这样 trace 能准确记录“为什么这一轮会触发压缩”。
+        int highFidelityCount = contextCompactor.policy().countHighFidelityMessages(messages);
+        // 再按策略固定保留最近窗口大小，
+        // 保证压缩结果完全由显式配置决定，而不是运行时猜测。
+        int retainedCount = Math.min(contextCompactor.policy().retainedHighFidelityMessages(), highFidelityCount);
+        // 最后得到本次真正被折叠进结构化摘要的消息数量，
+        // 这个数字同时会进入 trace 和 working memory 的归档元数据。
+        int compactedCount = highFidelityCount - retainedCount;
+
+        publishContextCompactionStarted(stepNumber, highFidelityCount, compactedCount);
+        // 先把归档元数据写进 working memory，
+        // 这样后续生成出的 `context_summary` 会携带最新 checkpoint 信息。
+        workingMemory.recordCompaction("high_fidelity_message_limit", compactedCount);
+        WorkingMemorySnapshot snapshot = workingMemory.snapshot();
+        // 再用快照去重建消息窗口，
+        // 输出会稳定收敛成“system -> working_memory -> context_summary -> recent messages”。
+        ContextCompactor.CompactionResult compactionResult = contextCompactor.compact(messages, snapshot);
+        publishContextCompactionCompleted(stepNumber, snapshot, compactionResult);
+        return new ArrayList<>(compactionResult.messages());
+    }
+
     private void publishModelCallRequested(int stepNumber, List<ConversationMessage> messages) {
         tracePublisher.publish(new TracePublisher.TraceEvent(
                 TraceEventType.MODEL_CALL_REQUESTED,
@@ -144,6 +210,37 @@ public class AgentLoop {
                 Map.of(
                         "stepNumber", Integer.toString(stepNumber),
                         "messageCount", Integer.toString(messages.size())
+                )
+        ));
+    }
+
+    private void publishContextCompactionStarted(int stepNumber, int highFidelityCount, int compactedCount) {
+        tracePublisher.publish(new TracePublisher.TraceEvent(
+                TraceEventType.CONTEXT_COMPACTION_STARTED,
+                "第%d步开始压缩上下文".formatted(stepNumber),
+                Instant.now(),
+                Map.of(
+                        "stepNumber", Integer.toString(stepNumber),
+                        "highFidelityMessageCount", Integer.toString(highFidelityCount),
+                        "compactedMessageCount", Integer.toString(compactedCount)
+                )
+        ));
+    }
+
+    private void publishContextCompactionCompleted(
+            int stepNumber,
+            WorkingMemorySnapshot snapshot,
+            ContextCompactor.CompactionResult compactionResult
+    ) {
+        tracePublisher.publish(new TracePublisher.TraceEvent(
+                TraceEventType.CONTEXT_COMPACTION_COMPLETED,
+                "第%d步完成上下文压缩".formatted(stepNumber),
+                Instant.now(),
+                Map.of(
+                        "stepNumber", Integer.toString(stepNumber),
+                        "compactedMessageCount", Integer.toString(compactionResult.compactedHighFidelityMessageCount()),
+                        "messageCountAfter", Integer.toString(compactionResult.messages().size()),
+                        "checkpointId", snapshot.resumeCheckpointId() == null ? "none" : snapshot.resumeCheckpointId()
                 )
         ));
     }
@@ -240,5 +337,9 @@ public class AgentLoop {
                 PermissionPolicy.allowAll(),
                 new DiffReviewService(Path.of("").toAbsolutePath().normalize())
         );
+    }
+
+    private static ContextCompactor defaultContextCompactor() {
+        return new ContextCompactor(ContextCompactionPolicy.defaultPolicy());
     }
 }

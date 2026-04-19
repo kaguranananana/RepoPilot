@@ -208,6 +208,87 @@ class DeepSeekChatModelAdapterTest {
     }
 
     @Test
+    void shouldSerializeWorkingMemoryAndContextSummaryMessagesBeforeRecentHistory() throws Exception {
+        httpServer.createContext("/chat/completions", exchange -> {
+            lastRequestBody = new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8);
+
+            respondJson(exchange, """
+                    {
+                      "id": "chatcmpl-004",
+                      "choices": [
+                        {
+                          "index": 0,
+                          "message": {
+                            "role": "assistant",
+                            "content": "继续分析"
+                          }
+                        }
+                      ]
+                    }
+                    """);
+        });
+        httpServer.start();
+
+        DeepSeekChatModelAdapter adapter = new DeepSeekChatModelAdapter(
+                "test-key",
+                baseUrl,
+                "deepseek-chat",
+                List.of()
+        );
+
+        ModelResponse response = adapter.next(List.of(
+                new ConversationMessage(MessageRole.SYSTEM, "你是 RepoPilot。"),
+                ConversationMessage.workingMemory("""
+                        working_memory
+                        task_goal: 读取 pom.xml
+                        confirmed_facts:
+                        - 已读取文件: pom.xml
+                        recent_tool_results:
+                        - read_file(path=pom.xml) -> SUCCESS: <project/>
+                        current_blockers:
+                        - none
+                        artifact_references:
+                        - none
+                        next_action: 继续推进当前任务
+                        """),
+                ConversationMessage.contextSummary("""
+                        context_summary
+                        user_constraints:
+                        - 不要修改无关文件
+                        key_files_read:
+                        - pom.xml
+                        important_tool_calls:
+                        - read_file(path=pom.xml)
+                        tool_errors:
+                        - none
+                        confirmed_outcomes:
+                        - none
+                        archive_state:
+                        - compaction_count: 1
+                        - archived_message_count: 3
+                        - checkpoint_id: compaction-1
+                        - latest_archive_reason: high_fidelity_message_limit
+                        """),
+                new ConversationMessage(MessageRole.ASSISTANT, "继续分析 pom.xml")
+        ));
+
+        FinalModelResponse finalResponse = assertInstanceOf(FinalModelResponse.class, response);
+        assertEquals("继续分析", finalResponse.message());
+        assertTrue(lastRequestBody.contains("\"role\":\"system\""));
+        assertTrue(lastRequestBody.contains("\"content\":\"working_memory\\ntask_goal: 读取 pom.xml"));
+        assertTrue(lastRequestBody.contains("\"content\":\"context_summary\\nuser_constraints:"));
+
+        int workingMemoryIndex = lastRequestBody.indexOf("\"content\":\"working_memory\\ntask_goal: 读取 pom.xml");
+        int contextSummaryIndex = lastRequestBody.indexOf("\"content\":\"context_summary\\nuser_constraints:");
+        int assistantIndex = lastRequestBody.indexOf("\"content\":\"继续分析 pom.xml\"");
+        assertTrue(workingMemoryIndex > -1);
+        assertTrue(contextSummaryIndex > -1);
+        assertTrue(assistantIndex > -1);
+        assertTrue(workingMemoryIndex < assistantIndex);
+        assertTrue(contextSummaryIndex < assistantIndex);
+    }
+
+    @Test
     void shouldFailFastWhenDeepSeekApiReturnsNonSuccessStatus() throws Exception {
         httpServer.createContext("/chat/completions", exchange -> {
             respondJson(exchange, 401, """

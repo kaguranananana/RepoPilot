@@ -9,6 +9,7 @@ public enum MessageRole {
     SYSTEM,
     USER,
     ASSISTANT,
-    TOOL
+    TOOL,
+    WORKING_MEMORY,
+    CONTEXT_SUMMARY
 }
-

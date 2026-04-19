@@ -10,7 +10,7 @@ import java.util.Objects;
  * 1. TOOL 消息对应的 `toolCallId`
  * 2. assistant 发起工具调用时的 `toolCalls`
  */
-public record ConversationMessage(
+public record   ConversationMessage(
         MessageRole role,
         String content,
         String toolCallId,
@@ -38,6 +38,10 @@ public record ConversationMessage(
         if (toolCallId != null && role != MessageRole.TOOL) {
             throw new IllegalArgumentException("Only TOOL message can contain toolCallId.");
         }
+
+        if ((role == MessageRole.WORKING_MEMORY || role == MessageRole.CONTEXT_SUMMARY) && content.isBlank()) {
+            throw new IllegalArgumentException(role + " message must contain non-blank content.");
+        }
     }
 
     public ConversationMessage(MessageRole role, String content) {
@@ -50,6 +54,14 @@ public record ConversationMessage(
 
     public static ConversationMessage toolResult(String toolCallId, String content) {
         return new ConversationMessage(MessageRole.TOOL, content, toolCallId, List.of());
+    }
+
+    public static ConversationMessage workingMemory(String content) {
+        return new ConversationMessage(MessageRole.WORKING_MEMORY, content, null, List.of());
+    }
+
+    public static ConversationMessage contextSummary(String content) {
+        return new ConversationMessage(MessageRole.CONTEXT_SUMMARY, content, null, List.of());
     }
 
     private static String normalizeOptionalText(String value) {

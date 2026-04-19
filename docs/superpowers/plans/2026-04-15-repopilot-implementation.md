@@ -195,12 +195,17 @@
 - Create: `repopilot-core/src/test/java/com/repopilot/core/context/WorkingMemoryTest.java`
 - Create: `repopilot-core/src/test/java/com/repopilot/core/agent/AgentLoopContextCompactionTest.java`
 
-- [ ] 定义 `working_memory` 与 `context_summary` 在运行时消息模型中的表示方式。
-- [ ] 固定保留 system prompt、任务目标、已确认事实、最近关键工具结果、当前阻塞、产出物引用与最近若干轮高保真消息。
-- [ ] 把更早的工具执行轨迹压缩为结构化摘要，而不是普通聊天总结。
-- [ ] 给压缩动作预留 trace 钩子，便于后续回放和调试。
-- [ ] 给后续 append-only 历史归档、会话恢复和 idle session auto-compact 预留数据结构接口。
-- [ ] 提供本 task 的交互式终端验收命令、预期现象与观察重点，并在人工确认后再勾选完成。
+- [x] 定义 `working_memory` 与 `context_summary` 在运行时消息模型中的表示方式。
+- [x] 固定保留 system prompt、任务目标、已确认事实、最近关键工具结果、当前阻塞、产出物引用与最近若干轮高保真消息。
+- [x] 把更早的工具执行轨迹压缩为结构化摘要，而不是普通聊天总结。
+- [x] 给压缩动作预留 trace 钩子，便于后续回放和调试。
+- [x] 给后续 append-only 历史归档、会话恢复和 idle session auto-compact 预留数据结构接口。
+- [x] 提供本 task 的交互式终端验收命令、预期现象与观察重点，并在人工确认后再勾选完成。
+
+**Acceptance:**
+- Command: `mvn -pl repopilot-core,repopilot-cli -am -Dsurefire.failIfNoSpecifiedTests=false -Dtest=WorkingMemoryTest,ContextCompactorTest,AgentLoopContextCompactionTest,DeepSeekChatModelAdapterTest test`
+- Expected: `WorkingMemoryTest`、`ContextCompactorTest`、`AgentLoopContextCompactionTest`、`DeepSeekChatModelAdapterTest` 全部通过。
+- Observe: 第二轮模型调用前会注入 `WORKING_MEMORY` 与 `CONTEXT_SUMMARY`；CLI 适配层会把两类结构化消息序列化进真实模型请求。
 
 ### Task 12: Skill 渐进式加载
 
