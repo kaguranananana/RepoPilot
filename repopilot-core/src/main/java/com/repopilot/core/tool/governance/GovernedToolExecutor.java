@@ -9,6 +9,7 @@ import com.repopilot.core.permission.PermissionPolicy.PermissionDisposition;
 import com.repopilot.core.review.DiffReviewService;
 import com.repopilot.core.review.DiffReviewService.DiffReviewSummary;
 import com.repopilot.core.tool.ToolDefinition;
+import com.repopilot.core.tool.ToolExecutionContext;
 import com.repopilot.core.tool.ToolExecutionResult;
 import com.repopilot.core.tool.ToolNotFoundException;
 import com.repopilot.core.tool.ToolRegistry;
@@ -74,6 +75,15 @@ public final class GovernedToolExecutor {
     }
 
     public ToolExecutionResult execute(String toolName, Map<String, String> arguments) {
+        return execute(ToolExecutionContext.empty(), toolName, arguments);
+    }
+
+    public ToolExecutionResult execute(
+            ToolExecutionContext executionContext,
+            String toolName,
+            Map<String, String> arguments
+    ) {
+        Objects.requireNonNull(executionContext, "executionContext must not be null.");
         String safeToolName = requireNonBlank(toolName, "toolName must not be blank.");
         Map<String, String> safeArguments = arguments == null ? Map.of() : Map.copyOf(arguments);
 
@@ -112,10 +122,10 @@ public final class GovernedToolExecutor {
             return ToolExecutionResult.recoverableError("权限拒绝: " + permissionDecision.reason());
         }
         if (permissionDecision.disposition() == PermissionDisposition.ASK) {
-            return executeAfterApproval(toolDefinition, safeArguments, permissionDecision);
+            return executeAfterApproval(executionContext, toolDefinition, safeArguments, permissionDecision);
         }
 
-        ToolExecutionResult executionResult = executeRegisteredTool(safeToolName, safeArguments);
+        ToolExecutionResult executionResult = executeRegisteredTool(executionContext, safeToolName, safeArguments);
         if (executionResult == null) {
             return ToolExecutionResult.fatalError("工具返回了空结果: " + safeToolName);
         }
@@ -128,9 +138,13 @@ public final class GovernedToolExecutor {
         return executionResult;
     }
 
-    private ToolExecutionResult executeRegisteredTool(String toolName, Map<String, String> arguments) {
+    private ToolExecutionResult executeRegisteredTool(
+            ToolExecutionContext executionContext,
+            String toolName,
+            Map<String, String> arguments
+    ) {
         try {
-            return toolRegistry.execute(toolName, arguments);
+            return toolRegistry.execute(toolName, executionContext, arguments);
         } catch (RuntimeException exception) {
             return ToolExecutionResult.fatalError("工具执行异常: " + exception.getMessage());
         }
@@ -185,6 +199,7 @@ public final class GovernedToolExecutor {
     }
 
     private ToolExecutionResult executeAfterApproval(
+            ToolExecutionContext executionContext,
             ToolDefinition toolDefinition,
             Map<String, String> arguments,
             PermissionDecision permissionDecision
@@ -212,7 +227,7 @@ public final class GovernedToolExecutor {
         }
 
         if (approvalDecision.disposition() == ToolApprovalHandler.Disposition.APPROVE) {
-            ToolExecutionResult executionResult = executeRegisteredTool(toolDefinition.name(), arguments);
+            ToolExecutionResult executionResult = executeRegisteredTool(executionContext, toolDefinition.name(), arguments);
             if (executionResult == null) {
                 return ToolExecutionResult.fatalError("工具返回了空结果: " + toolDefinition.name());
             }

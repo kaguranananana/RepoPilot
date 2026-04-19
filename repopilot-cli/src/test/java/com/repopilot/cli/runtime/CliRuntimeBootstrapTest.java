@@ -10,16 +10,24 @@ import com.repopilot.core.model.ModelAdapter;
 import com.repopilot.core.model.ModelResponse;
 import com.repopilot.core.model.ToolCall;
 import com.repopilot.core.model.ToolCallModelResponse;
+import com.repopilot.core.skill.SkillLoader;
+import com.repopilot.core.skill.SkillSummary;
 import com.repopilot.protocol.session.SessionStatus;
 import com.repopilot.protocol.session.SessionSummary;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Map;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
 class CliRuntimeBootstrapTest {
+
+    @TempDir
+    Path tempRoot;
 
     @Test
     void shouldExposeBuiltinToolsToDynamicPromptContext() {
@@ -47,8 +55,61 @@ class CliRuntimeBootstrapTest {
                 answer
         );
         assertEquals(
-                List.of("read_file", "grep_files", "write_file", "run_command"),
+                List.of("read_file", "grep_files", "activate_skill", "write_file", "run_command"),
                 promptBuilder.capturedContext.availableTools().stream().map(tool -> tool.name()).toList()
+        );
+    }
+
+    @Test
+    void shouldLoadSkillSummariesIntoDynamicPromptContext() throws Exception {
+        Path workspaceRoot = tempRoot.resolve("workspace");
+        Path userHome = tempRoot.resolve("home");
+        writeSkill(
+                workspaceRoot.resolve(".repopilot/skills/project-skill"),
+                """
+                        ---
+                        name: project-skill
+                        description: 项目级 Skill 摘要
+                        allowed-tools:
+                          - read_file
+                        ---
+                        """
+        );
+        writeSkill(
+                userHome.resolve(".repopilot/skills/user-skill"),
+                """
+                        ---
+                        name: user-skill
+                        description: 用户级 Skill 摘要
+                        ---
+                        """
+        );
+        CapturingSystemPromptBuilder promptBuilder = new CapturingSystemPromptBuilder();
+        CliRuntimeBootstrap bootstrap = new CliRuntimeBootstrap.DefaultCliRuntimeBootstrap(
+                Clock.fixed(Instant.parse("2026-04-16T07:00:00Z"), ZoneOffset.UTC),
+                promptBuilder,
+                SkillLoader.forRoots(
+                        List.of(workspaceRoot.resolve(".repopilot/skills")),
+                        List.of(userHome.resolve(".repopilot/skills"))
+                ),
+                (sessionSummary, availableTools) -> new CliRuntimeBootstrap.BootstrapModelAdapter(sessionSummary)
+        );
+
+        bootstrap.run(
+                new SessionSummary(
+                        "session-003",
+                        "workspace-001",
+                        "cli",
+                        SessionStatus.CREATED,
+                        Instant.parse("2026-04-16T06:59:00Z"),
+                        Instant.parse("2026-04-16T06:59:00Z")
+                ),
+                "列出可用 Skill"
+        );
+
+        assertEquals(
+                List.of("project-skill", "user-skill"),
+                promptBuilder.capturedContext.skillSummaries().stream().map(SkillSummary::name).toList()
         );
     }
 
@@ -104,5 +165,10 @@ class CliRuntimeBootstrapTest {
             cursor += 1;
             return response;
         }
+    }
+
+    private void writeSkill(Path skillRoot, String frontMatter) throws Exception {
+        Files.createDirectories(skillRoot);
+        Files.writeString(skillRoot.resolve("SKILL.md"), frontMatter + "## Skill\n正文\n");
     }
 }

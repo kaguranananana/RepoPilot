@@ -14,6 +14,12 @@ public interface InteractiveRuntimeRunner {
 
     List<ConversationMessage> createInitialHistory(SessionSummary sessionSummary);
 
+    InteractiveTurnResult activateSkill(
+            SessionSummary sessionSummary,
+            List<ConversationMessage> history,
+            String skillName
+    );
+
     InteractiveTurnResult runTurn(
             SessionSummary sessionSummary,
             List<ConversationMessage> history,

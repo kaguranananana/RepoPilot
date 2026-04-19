@@ -1,6 +1,7 @@
 package com.repopilot.core.context;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.repopilot.core.model.ConversationMessage;
 import com.repopilot.core.model.MessageRole;
@@ -52,5 +53,44 @@ class ContextCompactorTest {
         assertEquals(2, result.compactedHighFidelityMessageCount());
         assertEquals("working_memory", result.messages().get(1).content().lines().findFirst().orElseThrow());
         assertEquals("context_summary", result.messages().get(2).content().lines().findFirst().orElseThrow());
+    }
+
+    @Test
+    void shouldPreserveActivatedSkillSystemMessagesDuringCompaction() {
+        ContextCompactionPolicy policy = new ContextCompactionPolicy(3, 1, 1);
+        ContextCompactor compactor = new ContextCompactor(policy);
+        WorkingMemorySnapshot snapshot = new WorkingMemorySnapshot(
+                "修复失败测试",
+                List.of("已激活 debug Skill"),
+                List.of("activate_skill(name=debug) -> SUCCESS"),
+                List.of(),
+                List.of(),
+                "继续读取失败堆栈",
+                List.of("SKILL.md"),
+                List.of("activate_skill(name=debug)"),
+                List.of(),
+                List.of(),
+                List.of(),
+                1,
+                3,
+                "compaction-2",
+                "high_fidelity_message_limit"
+        );
+
+        ContextCompactor.CompactionResult result = compactor.compact(List.of(
+                new ConversationMessage(MessageRole.SYSTEM, "system"),
+                new ConversationMessage(
+                        MessageRole.SYSTEM,
+                        "# Activated Skill\nname: debug\nsource: project\n\n## Debug Skill\n先复现，再缩小范围。"
+                ),
+                new ConversationMessage(MessageRole.USER, "修复失败测试"),
+                new ConversationMessage(MessageRole.ASSISTANT, "先读取堆栈"),
+                new ConversationMessage(MessageRole.TOOL, "[read_file] stacktrace", "call-1", List.of()),
+                new ConversationMessage(MessageRole.ASSISTANT, "继续分析")
+        ), snapshot);
+
+        assertTrue(result.messages().stream()
+                .filter(message -> message.role() == MessageRole.SYSTEM)
+                .anyMatch(message -> message.content().contains("# Activated Skill")));
     }
 }

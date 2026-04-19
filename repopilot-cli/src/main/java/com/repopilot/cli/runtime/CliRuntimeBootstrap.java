@@ -13,6 +13,7 @@ import com.repopilot.core.prompt.SystemPromptBoundary;
 import com.repopilot.core.prompt.SystemPromptBuilder;
 import com.repopilot.core.permission.WorkspacePermissionPolicy;
 import com.repopilot.core.review.DiffReviewService;
+import com.repopilot.core.skill.SkillLoader;
 import com.repopilot.core.trace.TracePublisher;
 import com.repopilot.core.tool.ToolDefinition;
 import com.repopilot.core.tool.builtin.BuiltinToolRegistrar;
@@ -48,6 +49,7 @@ public interface CliRuntimeBootstrap {
         return new DefaultCliRuntimeBootstrap(
                 Clock.systemUTC(),
                 new SystemPromptBuilder(),
+                SkillLoader.createDefault(workspaceRoot, resolveUserHome()),
                 new EnvironmentBackedModelAdapterFactory(
                         LocalEnvironmentMapLoader.load(workspaceRoot, System.getenv())
                 )
@@ -63,6 +65,7 @@ public interface CliRuntimeBootstrap {
 
         private final Clock clock;
         private final SystemPromptBuilder systemPromptBuilder;
+        private final SkillLoader skillLoader;
         private final ModelAdapterFactory modelAdapterFactory;
 
         DefaultCliRuntimeBootstrap(
@@ -70,9 +73,24 @@ public interface CliRuntimeBootstrap {
                 SystemPromptBuilder systemPromptBuilder,
                 ModelAdapterFactory modelAdapterFactory
         ) {
+            this(
+                    clock,
+                    systemPromptBuilder,
+                    SkillLoader.createDefault(Path.of("").toAbsolutePath().normalize(), resolveUserHome()),
+                    modelAdapterFactory
+            );
+        }
+
+        DefaultCliRuntimeBootstrap(
+                Clock clock,
+                SystemPromptBuilder systemPromptBuilder,
+                SkillLoader skillLoader,
+                ModelAdapterFactory modelAdapterFactory
+        ) {
             this.clock = Objects.requireNonNull(clock, "clock must not be null.");
             this.systemPromptBuilder =
                     Objects.requireNonNull(systemPromptBuilder, "systemPromptBuilder must not be null.");
+            this.skillLoader = Objects.requireNonNull(skillLoader, "skillLoader must not be null.");
             this.modelAdapterFactory =
                     Objects.requireNonNull(modelAdapterFactory, "modelAdapterFactory must not be null.");
         }
@@ -88,7 +106,7 @@ public interface CliRuntimeBootstrap {
             // 这里显式把第一批内置工具注册进来，
             // 让 dynamic prompt 和后续运行时执行链路看到的是同一套真实能力。
             ToolRegistry toolRegistry = new ToolRegistry();
-            BuiltinToolRegistrar.registerAll(toolRegistry, workspaceRoot);
+            BuiltinToolRegistrar.registerAll(toolRegistry, workspaceRoot, skillLoader);
             GovernedToolExecutor governedToolExecutor = new GovernedToolExecutor(
                     toolRegistry,
                     new WorkspacePermissionPolicy(workspaceRoot),
@@ -128,7 +146,7 @@ public interface CliRuntimeBootstrap {
                     // 工作区信息单独成段，
                     // 保持与会话前导、预算提示等动态信息分离。
                     "workspaceId=%s".formatted(sessionSummary.workspaceId()),
-                    List.of(),
+                    skillLoader.loadIndex().summaries(),
                     // 当前入口先把预算固定为 8 步，
                     // 既能覆盖一轮真实 tool-calling，
                     // 又不会把最小演示回合无限放大。
@@ -166,6 +184,14 @@ public interface CliRuntimeBootstrap {
             }
             return value.strip();
         }
+    }
+
+    private static Path resolveUserHome() {
+        String userHome = System.getProperty("user.home");
+        if (userHome == null || userHome.isBlank()) {
+            throw new IllegalStateException("user.home 系统属性缺失。");
+        }
+        return Path.of(userHome).toAbsolutePath().normalize();
     }
 
     @FunctionalInterface

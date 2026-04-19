@@ -1,5 +1,6 @@
 package com.repopilot.core.prompt;
 
+import com.repopilot.core.skill.SkillSummary;
 import com.repopilot.core.tool.ToolDefinition;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -16,7 +17,7 @@ import java.util.Objects;
 public record DynamicPromptContext(
         String sessionPreamble,
         String workspaceContext,
-        List<String> skillSummaries,
+        List<SkillSummary> skillSummaries,
         String budgetHint,
         List<ToolDefinition> availableTools,
         Map<String, String> runtimeMetadata
@@ -38,15 +39,14 @@ public record DynamicPromptContext(
         return value.strip();
     }
 
-    private static List<String> normalizeSkillSummaries(List<String> skillSummaries) {
+    private static List<SkillSummary> normalizeSkillSummaries(List<SkillSummary> skillSummaries) {
         if (skillSummaries == null) {
             return List.of();
         }
 
-        List<String> normalized = new ArrayList<>(skillSummaries.size());
-        for (String skillSummary : skillSummaries) {
-            String safeSkillSummary = normalizeRequiredText(skillSummary, "Skill summary must not be blank.");
-            normalized.add(safeSkillSummary);
+        List<SkillSummary> normalized = new ArrayList<>(skillSummaries.size());
+        for (SkillSummary skillSummary : skillSummaries) {
+            normalized.add(Objects.requireNonNull(skillSummary, "Skill summary must not be null."));
         }
         return List.copyOf(normalized);
     }

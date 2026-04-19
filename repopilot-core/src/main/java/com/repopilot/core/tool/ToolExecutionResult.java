@@ -1,5 +1,7 @@
 package com.repopilot.core.tool;
 
+import com.repopilot.core.model.ConversationMessage;
+import java.util.List;
 import java.util.Objects;
 
 /**
@@ -11,20 +13,34 @@ import java.util.Objects;
  */
 public record ToolExecutionResult(
         Status status,
-        String output
+        String output,
+        List<ConversationMessage> appendedMessages
 ) {
 
     public ToolExecutionResult {
         status = Objects.requireNonNull(status, "status must not be null.");
         output = Objects.requireNonNull(output, "output must not be null.");
+        appendedMessages = appendedMessages == null ? List.of() : List.copyOf(appendedMessages);
+    }
+
+    public ToolExecutionResult(Status status, String output) {
+        this(status, output, List.of());
     }
 
     public static ToolExecutionResult success(String output) {
         return new ToolExecutionResult(Status.SUCCESS, output);
     }
 
+    public static ToolExecutionResult success(String output, List<ConversationMessage> appendedMessages) {
+        return new ToolExecutionResult(Status.SUCCESS, output, appendedMessages);
+    }
+
     public static ToolExecutionResult recoverableError(String output) {
         return new ToolExecutionResult(Status.RECOVERABLE_ERROR, output);
+    }
+
+    public static ToolExecutionResult recoverableError(String output, List<ConversationMessage> appendedMessages) {
+        return new ToolExecutionResult(Status.RECOVERABLE_ERROR, output, appendedMessages);
     }
 
     public static ToolExecutionResult fatalError(String output) {

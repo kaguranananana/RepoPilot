@@ -13,6 +13,7 @@ import com.repopilot.core.model.ToolCallModelResponse;
 import com.repopilot.core.permission.PermissionPolicy;
 import com.repopilot.core.review.DiffReviewService;
 import com.repopilot.core.trace.TracePublisher;
+import com.repopilot.core.tool.ToolExecutionContext;
 import com.repopilot.core.tool.ToolExecutionResult;
 import com.repopilot.core.tool.ToolRegistry;
 import com.repopilot.core.tool.governance.GovernedToolExecutor;
@@ -138,7 +139,11 @@ public class AgentLoop {
                     publishToolCallRequested(step + 1, toolCall);
                     workingMemory.recordToolCall(toolCall);
                     ToolExecutionResult executionResult =
-                            governedToolExecutor.execute(toolCall.toolName(), toolCall.arguments());
+                            governedToolExecutor.execute(
+                                    new ToolExecutionContext(List.copyOf(messages)),
+                                    toolCall.toolName(),
+                                    toolCall.arguments()
+                            );
                     // 工具返回后立刻通知观察器，
                     // 即使结果是致命错误，也保证外层能先拿到真实失败信息。
                     observer.onToolExecutionFinished(step + 1, toolCall, executionResult);
@@ -158,6 +163,7 @@ public class AgentLoop {
                             formatToolMessage(toolCall.toolName(), executionResult)
                     );
                     messages.add(toolMessage);
+                    messages.addAll(executionResult.appendedMessages());
 
                     // TOOL 消息只有在真正成功追加进历史后才通知观察器，
                     // 这样外层调试输出看到的就是下一轮模型会实际收到的消息内容。

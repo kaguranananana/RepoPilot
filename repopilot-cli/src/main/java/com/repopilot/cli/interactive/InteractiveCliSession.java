@@ -34,6 +34,7 @@ public final class InteractiveCliSession {
     private final InteractiveCliConfig config;
     private final InteractiveRuntimeRunner runtimeRunner;
     private final ConsoleTraceObserver traceObserver;
+    private final UserSkillCommandParser skillCommandParser;
 
     private SessionSummary currentSession;
     private List<ConversationMessage> history = List.of();
@@ -78,7 +79,8 @@ public final class InteractiveCliSession {
                 sessionClient,
                 config,
                 runtimeRunner,
-                traceObserver
+                traceObserver,
+                new UserSkillCommandParser()
         );
     }
 
@@ -90,12 +92,33 @@ public final class InteractiveCliSession {
             InteractiveRuntimeRunner runtimeRunner,
             ConsoleTraceObserver traceObserver
     ) {
+        this(
+                lineInput,
+                outputWriter,
+                sessionClient,
+                config,
+                runtimeRunner,
+                traceObserver,
+                new UserSkillCommandParser()
+        );
+    }
+
+    InteractiveCliSession(
+            InteractiveLineInput lineInput,
+            PrintWriter outputWriter,
+            SessionClient sessionClient,
+            InteractiveCliConfig config,
+            InteractiveRuntimeRunner runtimeRunner,
+            ConsoleTraceObserver traceObserver,
+            UserSkillCommandParser skillCommandParser
+    ) {
         this.lineInput = Objects.requireNonNull(lineInput, "lineInput must not be null.");
         this.outputWriter = Objects.requireNonNull(outputWriter, "outputWriter must not be null.");
         this.sessionClient = Objects.requireNonNull(sessionClient, "sessionClient must not be null.");
         this.config = Objects.requireNonNull(config, "config must not be null.");
         this.runtimeRunner = Objects.requireNonNull(runtimeRunner, "runtimeRunner must not be null.");
         this.traceObserver = Objects.requireNonNull(traceObserver, "traceObserver must not be null.");
+        this.skillCommandParser = Objects.requireNonNull(skillCommandParser, "skillCommandParser must not be null.");
     }
 
     public void start() {
@@ -124,7 +147,7 @@ public final class InteractiveCliSession {
                 continue;
             }
 
-            runSingleTurn(normalizedInput);
+            runSingleInput(normalizedInput);
         }
     }
 
@@ -151,14 +174,20 @@ public final class InteractiveCliSession {
         }
     }
 
-    private void runSingleTurn(String prompt) {
-        traceObserver.onUserPrompt(prompt);
+    private void runSingleInput(String input) {
+        traceObserver.onUserPrompt(input);
 
         try {
+            UserSkillCommand skillCommand = skillCommandParser.parse(input).orElse(null);
+            if (skillCommand != null) {
+                runSkillCommand(skillCommand);
+                return;
+            }
+
             InteractiveTurnResult result = runtimeRunner.runTurn(
                     currentSession,
                     history,
-                    prompt,
+                    input,
                     traceObserver
             );
             this.history = result.messages();
@@ -166,6 +195,29 @@ public final class InteractiveCliSession {
         } catch (RuntimeException exception) {
             traceObserver.onError(exception.getMessage());
         }
+    }
+
+    private void runSkillCommand(UserSkillCommand skillCommand) {
+        InteractiveTurnResult activationResult = runtimeRunner.activateSkill(
+                currentSession,
+                history,
+                skillCommand.skillName()
+        );
+        this.history = activationResult.messages();
+
+        if (!skillCommand.hasRemainingPrompt()) {
+            traceObserver.onAssistantAnswer(activationResult.finalAnswer());
+            return;
+        }
+
+        InteractiveTurnResult turnResult = runtimeRunner.runTurn(
+                currentSession,
+                history,
+                skillCommand.remainingPrompt(),
+                traceObserver
+        );
+        this.history = turnResult.messages();
+        traceObserver.onAssistantAnswer(turnResult.finalAnswer());
     }
 
     private String readNextInput() {

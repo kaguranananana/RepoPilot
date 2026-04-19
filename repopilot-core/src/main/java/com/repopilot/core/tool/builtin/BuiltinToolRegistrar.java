@@ -1,5 +1,6 @@
 package com.repopilot.core.tool.builtin;
 
+import com.repopilot.core.skill.SkillLoader;
 import com.repopilot.core.tool.ToolRegistry;
 import java.nio.file.Path;
 import java.util.List;
@@ -16,9 +17,10 @@ public final class BuiltinToolRegistrar {
     private BuiltinToolRegistrar() {
     }
 
-    public static void registerAll(ToolRegistry toolRegistry, Path workspaceRoot) {
+    public static void registerAll(ToolRegistry toolRegistry, Path workspaceRoot, SkillLoader skillLoader) {
         Objects.requireNonNull(toolRegistry, "toolRegistry must not be null.");
         Objects.requireNonNull(workspaceRoot, "workspaceRoot must not be null.");
+        Objects.requireNonNull(skillLoader, "skillLoader must not be null.");
 
         // 先注册读文件工具，
         // 让模型能够拿到最直接的源码证据。
@@ -58,6 +60,25 @@ public final class BuiltinToolRegistrar {
                         "required", List.of("pattern")
                 ),
                 new GrepFilesTool(workspaceRoot)
+        );
+
+        // Skill 激活属于显式上下文装配动作，
+        // 风险明显低于写文件和跑命令，
+        // 因此固定放在变更型工具之前暴露给模型。
+        toolRegistry.register(
+                "activate_skill",
+                "按名称激活单个 Skill",
+                Map.of(
+                        "type", "object",
+                        "properties", Map.of(
+                                "name", Map.of(
+                                        "type", "string",
+                                        "description", "要激活的 Skill 名称"
+                                )
+                        ),
+                        "required", List.of("name")
+                ),
+                new ActivateSkillTool(skillLoader)
         );
 
         // 再注册写文件工具，

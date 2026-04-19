@@ -10,9 +10,13 @@ import com.repopilot.core.model.FinalModelResponse;
 import com.repopilot.core.model.MessageRole;
 import com.repopilot.core.model.ModelAdapter;
 import com.repopilot.core.model.ModelResponse;
+import com.repopilot.core.approval.ToolApprovalHandler;
 import com.repopilot.core.tool.ToolDefinition;
+import com.repopilot.core.skill.SkillLoader;
 import com.repopilot.protocol.session.SessionStatus;
 import com.repopilot.protocol.session.SessionSummary;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneOffset;
@@ -20,8 +24,12 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
 class InteractiveRuntimeRunnerTest {
+
+    @TempDir
+    Path tempRoot;
 
     @Test
     void shouldCreateInitialHistoryWithTwoSystemMessages() {
@@ -73,6 +81,45 @@ class InteractiveRuntimeRunnerTest {
                 .anyMatch(message -> message.role() == MessageRole.USER && message.content().equals("第二问")));
     }
 
+    @Test
+    void shouldActivateSkillIntoHistoryWithoutCallingModel() throws Exception {
+        Path workspaceRoot = tempRoot.resolve("workspace");
+        Path userHome = tempRoot.resolve("home");
+        writeSkill(
+                workspaceRoot.resolve(".repopilot/skills/debug"),
+                """
+                        ---
+                        name: debug
+                        description: 结构化排查问题
+                        ---
+                        """,
+                "## Debug Skill\n先复现，再缩小范围。\n"
+        );
+        RecordingModelAdapterFactory modelAdapterFactory = new RecordingModelAdapterFactory();
+        DefaultInteractiveRuntimeRunner runtimeRunner = new DefaultInteractiveRuntimeRunner(
+                Clock.fixed(Instant.parse("2026-04-16T07:00:00Z"), ZoneOffset.UTC),
+                new com.repopilot.core.prompt.SystemPromptBuilder(),
+                modelAdapterFactory,
+                workspaceRoot,
+                8,
+                ToolApprovalHandler.denyAll(),
+                SkillLoader.createDefault(workspaceRoot, userHome)
+        );
+
+        List<ConversationMessage> initialHistory = runtimeRunner.createInitialHistory(session());
+        InteractiveTurnResult result = runtimeRunner.activateSkill(
+                session(),
+                initialHistory,
+                "debug"
+        );
+
+        assertEquals("Skill debug 已激活。", result.finalAnswer());
+        assertTrue(result.messages().stream()
+                .filter(message -> message.role() == MessageRole.SYSTEM)
+                .anyMatch(message -> message.content().contains("# Activated Skill")));
+        assertEquals(0, modelAdapterFactory.recordedCalls.size());
+    }
+
     private static SessionSummary session() {
         return new SessionSummary(
                 "session-001",
@@ -103,5 +150,10 @@ class InteractiveRuntimeRunnerTest {
                 }
             };
         }
+    }
+
+    private void writeSkill(Path skillRoot, String frontMatter, String body) throws Exception {
+        Files.createDirectories(skillRoot);
+        Files.writeString(skillRoot.resolve("SKILL.md"), frontMatter + body);
     }
 }

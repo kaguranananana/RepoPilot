@@ -106,8 +106,8 @@ class DeepSeekChatModelAdapterTest {
                                 "id": "call-001",
                                 "type": "function",
                                 "function": {
-                                  "name": "read_file",
-                                  "arguments": "{\\"path\\":\\"README.md\\"}"
+                                  "name": "activate_skill",
+                                  "arguments": "{\\"name\\":\\"debug\\"}"
                                 }
                               }
                             ]
@@ -124,31 +124,31 @@ class DeepSeekChatModelAdapterTest {
                 baseUrl,
                 "deepseek-chat",
                 List.of(new ToolDefinition(
-                        "read_file",
-                        "读取文件",
+                        "activate_skill",
+                        "按名称激活单个 Skill",
                         Map.of(
                                 "type", "object",
                                 "properties", Map.of(
-                                        "path", Map.of("type", "string", "description", "要读取的文件路径")
+                                        "name", Map.of("type", "string", "description", "要激活的 Skill 名称")
                                 ),
-                                "required", List.of("path")
+                                "required", List.of("name")
                         )
                 ))
         );
 
         ModelResponse response = adapter.next(List.of(
                 new ConversationMessage(MessageRole.SYSTEM, "你是 RepoPilot。"),
-                new ConversationMessage(MessageRole.USER, "读取 README.md")
+                new ConversationMessage(MessageRole.USER, "激活 debug Skill")
         ));
 
         ToolCallModelResponse toolCallResponse = assertInstanceOf(ToolCallModelResponse.class, response);
         assertEquals(1, toolCallResponse.toolCalls().size());
         assertEquals("call-001", toolCallResponse.toolCalls().get(0).id());
-        assertEquals("read_file", toolCallResponse.toolCalls().get(0).toolName());
-        assertEquals(Map.of("path", "README.md"), toolCallResponse.toolCalls().get(0).arguments());
+        assertEquals("activate_skill", toolCallResponse.toolCalls().get(0).toolName());
+        assertEquals(Map.of("name", "debug"), toolCallResponse.toolCalls().get(0).arguments());
         assertTrue(lastRequestBody.contains("\"tools\""));
-        assertTrue(lastRequestBody.contains("\"name\":\"read_file\""));
-        assertTrue(lastRequestBody.contains("\"required\":[\"path\"]"));
+        assertTrue(lastRequestBody.contains("\"name\":\"activate_skill\""));
+        assertTrue(lastRequestBody.contains("\"required\":[\"name\"]"));
     }
 
     @Test

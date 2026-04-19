@@ -13,6 +13,10 @@ import com.repopilot.core.prompt.SystemPromptBoundary;
 import com.repopilot.core.prompt.SystemPromptBuilder;
 import com.repopilot.core.permission.WorkspacePermissionPolicy;
 import com.repopilot.core.review.DiffReviewService;
+import com.repopilot.core.skill.ActivatedSkillSet;
+import com.repopilot.core.skill.SkillActivationResult;
+import com.repopilot.core.skill.SkillActivationService;
+import com.repopilot.core.skill.SkillLoader;
 import com.repopilot.core.tool.ToolRegistry;
 import com.repopilot.core.tool.builtin.BuiltinToolRegistrar;
 import com.repopilot.core.tool.governance.GovernedToolExecutor;
@@ -38,6 +42,8 @@ public final class DefaultInteractiveRuntimeRunner implements InteractiveRuntime
     private final Path workspaceRoot;
     private final int maxSteps;
     private final ToolApprovalHandler toolApprovalHandler;
+    private final SkillLoader skillLoader;
+    private final SkillActivationService skillActivationService;
 
     public DefaultInteractiveRuntimeRunner(
             Clock clock,
@@ -50,7 +56,11 @@ public final class DefaultInteractiveRuntimeRunner implements InteractiveRuntime
                 modelAdapterFactory,
                 Path.of("").toAbsolutePath().normalize(),
                 maxSteps,
-                ToolApprovalHandler.denyAll()
+                ToolApprovalHandler.denyAll(),
+                SkillLoader.createDefault(
+                        Path.of("").toAbsolutePath().normalize(),
+                        resolveUserHome()
+                )
         );
     }
 
@@ -67,7 +77,8 @@ public final class DefaultInteractiveRuntimeRunner implements InteractiveRuntime
                 modelAdapterFactory,
                 workspaceRoot,
                 maxSteps,
-                toolApprovalHandler
+                toolApprovalHandler,
+                SkillLoader.createDefault(workspaceRoot, resolveUserHome())
         );
     }
 
@@ -77,7 +88,8 @@ public final class DefaultInteractiveRuntimeRunner implements InteractiveRuntime
             CliRuntimeBootstrap.ModelAdapterFactory modelAdapterFactory,
             Path workspaceRoot,
             int maxSteps,
-            ToolApprovalHandler toolApprovalHandler
+            ToolApprovalHandler toolApprovalHandler,
+            SkillLoader skillLoader
     ) {
         this.clock = Objects.requireNonNull(clock, "clock must not be null.");
         this.systemPromptBuilder = Objects.requireNonNull(systemPromptBuilder, "systemPromptBuilder must not be null.");
@@ -90,6 +102,8 @@ public final class DefaultInteractiveRuntimeRunner implements InteractiveRuntime
         }
         this.maxSteps = maxSteps;
         this.toolApprovalHandler = Objects.requireNonNull(toolApprovalHandler, "toolApprovalHandler must not be null.");
+        this.skillLoader = Objects.requireNonNull(skillLoader, "skillLoader must not be null.");
+        this.skillActivationService = new SkillActivationService(this.skillLoader);
     }
 
     @Override
@@ -136,9 +150,30 @@ public final class DefaultInteractiveRuntimeRunner implements InteractiveRuntime
         return new InteractiveTurnResult(result.messages(), result.finalAnswer());
     }
 
+    @Override
+    public InteractiveTurnResult activateSkill(
+            SessionSummary sessionSummary,
+            List<ConversationMessage> history,
+            String skillName
+    ) {
+        Objects.requireNonNull(sessionSummary, "sessionSummary must not be null.");
+        Objects.requireNonNull(history, "history must not be null.");
+
+        // 用户显式触发路径不经过模型，
+        // 这里直接从当前历史恢复已激活集合并调用统一服务，
+        // 让用户触发和模型工具触发共享完全一致的激活语义。
+        SkillActivationResult result = skillActivationService.activate(
+                ActivatedSkillSet.fromMessages(history),
+                skillName
+        );
+        List<ConversationMessage> nextHistory = new ArrayList<>(history);
+        nextHistory.addAll(result.appendedMessages());
+        return new InteractiveTurnResult(nextHistory, result.output());
+    }
+
     private ToolRegistry createToolRegistry() {
         ToolRegistry toolRegistry = new ToolRegistry();
-        BuiltinToolRegistrar.registerAll(toolRegistry, workspaceRoot);
+        BuiltinToolRegistrar.registerAll(toolRegistry, workspaceRoot, skillLoader);
         return toolRegistry;
     }
 
@@ -155,7 +190,7 @@ public final class DefaultInteractiveRuntimeRunner implements InteractiveRuntime
                         sessionSummary.status()
                 ),
                 "workspaceId=%s".formatted(sessionSummary.workspaceId()),
-                List.of(),
+                skillLoader.loadIndex().summaries(),
                 "maxSteps=%d".formatted(maxSteps),
                 toolRegistry.list(),
                 Map.of(
@@ -186,5 +221,13 @@ public final class DefaultInteractiveRuntimeRunner implements InteractiveRuntime
             throw new IllegalArgumentException(message);
         }
         return value.strip();
+    }
+
+    private static Path resolveUserHome() {
+        String userHome = System.getProperty("user.home");
+        if (userHome == null || userHome.isBlank()) {
+            throw new IllegalStateException("user.home 系统属性缺失。");
+        }
+        return Path.of(userHome).toAbsolutePath().normalize();
     }
 }

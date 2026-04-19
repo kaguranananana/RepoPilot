@@ -65,7 +65,16 @@ public class ToolRegistry {
     }
 
     public ToolExecutionResult execute(String toolName, Map<String, String> arguments) {
+        return execute(toolName, ToolExecutionContext.empty(), arguments);
+    }
+
+    public ToolExecutionResult execute(
+            String toolName,
+            ToolExecutionContext executionContext,
+            Map<String, String> arguments
+    ) {
         requireNonBlank(toolName, "Tool name must not be blank.");
+        Objects.requireNonNull(executionContext, "Tool execution context must not be null.");
 
         RegisteredTool tool;
         synchronized (this) {
@@ -79,7 +88,7 @@ public class ToolRegistry {
         }
 
         Map<String, String> safeArguments = arguments == null ? Map.of() : Map.copyOf(arguments);
-        return tool.handler().execute(safeArguments);
+        return tool.handler().execute(executionContext, safeArguments);
     }
 
     private void requireNonBlank(String value, String message) {

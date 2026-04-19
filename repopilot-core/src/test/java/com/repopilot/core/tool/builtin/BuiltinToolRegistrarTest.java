@@ -19,12 +19,17 @@ class BuiltinToolRegistrarTest {
     @Test
     void shouldRegisterBuiltinToolsInStableOrder() throws Exception {
         Files.writeString(workspaceRoot.resolve("README.md"), "RepoPilot");
+        Path userHome = workspaceRoot.resolve("home");
 
         ToolRegistry toolRegistry = new ToolRegistry();
-        BuiltinToolRegistrar.registerAll(toolRegistry, workspaceRoot);
+        BuiltinToolRegistrar.registerAll(
+                toolRegistry,
+                workspaceRoot,
+                com.repopilot.core.skill.SkillLoader.createDefault(workspaceRoot, userHome)
+        );
 
         assertEquals(
-                List.of("read_file", "grep_files", "write_file", "run_command"),
+                List.of("read_file", "grep_files", "activate_skill", "write_file", "run_command"),
                 toolRegistry.list().stream().map(tool -> tool.name()).toList()
         );
         assertEquals(
@@ -32,12 +37,16 @@ class BuiltinToolRegistrarTest {
                 toolRegistry.list().get(0).parametersSchema().get("required")
         );
         assertEquals(
-                List.of("path", "content"),
+                List.of("name"),
                 toolRegistry.list().get(2).parametersSchema().get("required")
         );
         assertEquals(
-                List.of("command"),
+                List.of("path", "content"),
                 toolRegistry.list().get(3).parametersSchema().get("required")
+        );
+        assertEquals(
+                List.of("command"),
+                toolRegistry.list().get(4).parametersSchema().get("required")
         );
 
         ToolExecutionResult result = toolRegistry.execute("read_file", Map.of("path", "README.md"));

@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import com.repopilot.core.skill.SkillSummary;
 import com.repopilot.core.tool.ToolDefinition;
 import java.util.List;
 import java.util.Map;
@@ -18,7 +19,10 @@ class SystemPromptBuilderTest {
         SystemPromptBoundary boundary = builder.build(new DynamicPromptContext(
                 "你正在继续一个已存在的修复任务。",
                 "workspaceId=demo-workspace, repo=RepoPilot",
-                List.of("brainstorming: 先做设计确认", "test-driven-development: 先写失败测试"),
+                List.of(
+                        new SkillSummary("brainstorming", "先做设计确认", "project", List.of("read_file")),
+                        new SkillSummary("test-driven-development", "先写失败测试", "user", List.of("run_command"))
+                ),
                 "剩余预算 8 步，请优先调用低成本工具。",
                 List.of(
                         new ToolDefinition("read_file", "读取单个文件"),
@@ -38,6 +42,7 @@ class SystemPromptBuilderTest {
         assertTrue(boundary.sessionInstructions().contains("剩余预算 8 步，请优先调用低成本工具。"));
         assertTrue(boundary.sessionInstructions().contains("read_file: 读取单个文件"));
         assertTrue(boundary.sessionInstructions().contains("grep_files: 按模式搜索文件"));
+        assertFalse(boundary.sessionInstructions().contains("run_command"));
 
         assertFalse(boundary.baseInstructions().contains("demo-workspace"));
         assertFalse(boundary.systemPrompt().contains("session-42"));
@@ -52,7 +57,7 @@ class SystemPromptBuilderTest {
         SystemPromptBoundary firstBoundary = builder.build(new DynamicPromptContext(
                 "任务 A",
                 "workspace-A",
-                List.of("skill-A"),
+                List.of(new SkillSummary("skill-A", "摘要 A", "project", List.of("read_file"))),
                 "预算 A",
                 List.of(new ToolDefinition("read_file", "读取文件")),
                 Map.of("session_id", "session-A")
@@ -60,7 +65,7 @@ class SystemPromptBuilderTest {
         SystemPromptBoundary secondBoundary = builder.build(new DynamicPromptContext(
                 "任务 B",
                 "workspace-B",
-                List.of("skill-B"),
+                List.of(new SkillSummary("skill-B", "摘要 B", "user", List.of("run_command"))),
                 "预算 B",
                 List.of(new ToolDefinition("run_command", "执行命令")),
                 Map.of("session_id", "session-B")

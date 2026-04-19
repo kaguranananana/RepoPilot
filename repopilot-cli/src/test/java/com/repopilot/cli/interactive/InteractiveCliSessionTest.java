@@ -144,6 +144,63 @@ class InteractiveCliSessionTest {
     }
 
     @Test
+    void shouldActivateSkillOnlyWithoutRunningTurnWhenInputContainsOnlySkillCommand() {
+        RecordingSessionApiClient sessionApiClient = new RecordingSessionApiClient(List.of(
+                session("session-001", "workspace-001")
+        ));
+        RecordingRuntimeRunner runtimeRunner = new RecordingRuntimeRunner();
+        ByteArrayOutputStream outputStream = new ByteArrayOutputStream();
+        PrintWriter outputWriter = new PrintWriter(outputStream, true, StandardCharsets.UTF_8);
+
+        InteractiveCliSession session = new InteractiveCliSession(
+                new BufferedReader(new StringReader("/debug\n/exit\n")),
+                outputWriter,
+                sessionApiClient,
+                new InteractiveCliConfig("http://127.0.0.1:8080", "workspace-001"),
+                runtimeRunner,
+                new ConsoleTraceObserver(outputWriter)
+        );
+
+        session.start();
+
+        assertEquals(1, runtimeRunner.activateSkillCount.get());
+        assertEquals(0, runtimeRunner.runTurnCount.get());
+        assertEquals(List.of("debug"), runtimeRunner.activatedSkillNames);
+        assertTrue(outputStream.toString(StandardCharsets.UTF_8).contains("[assistant] Skill debug 已激活。"));
+    }
+
+    @Test
+    void shouldActivateSkillAndContinueRunningRemainingPrompt() {
+        RecordingSessionApiClient sessionApiClient = new RecordingSessionApiClient(List.of(
+                session("session-001", "workspace-001")
+        ));
+        RecordingRuntimeRunner runtimeRunner = new RecordingRuntimeRunner();
+        ByteArrayOutputStream outputStream = new ByteArrayOutputStream();
+        PrintWriter outputWriter = new PrintWriter(outputStream, true, StandardCharsets.UTF_8);
+
+        InteractiveCliSession session = new InteractiveCliSession(
+                new BufferedReader(new StringReader("/debug 修复这个测试\n/exit\n")),
+                outputWriter,
+                sessionApiClient,
+                new InteractiveCliConfig("http://127.0.0.1:8080", "workspace-001"),
+                runtimeRunner,
+                new ConsoleTraceObserver(outputWriter)
+        );
+
+        session.start();
+
+        assertEquals(1, runtimeRunner.activateSkillCount.get());
+        assertEquals(1, runtimeRunner.runTurnCount.get());
+        assertEquals(List.of("debug"), runtimeRunner.activatedSkillNames);
+        assertEquals("修复这个测试", runtimeRunner.prompts.get(0));
+        assertTrue(runtimeRunner.recordedHistories.get(0).stream()
+                .filter(message -> message.role() == MessageRole.SYSTEM)
+                .anyMatch(message -> message.content().contains("# Activated Skill")));
+        assertFalse(outputStream.toString(StandardCharsets.UTF_8).contains("[assistant] Skill debug 已激活。"));
+        assertTrue(outputStream.toString(StandardCharsets.UTF_8).contains("[assistant] 分析完成: 修复这个测试"));
+    }
+
+    @Test
     void shouldApproveWriteFileInsideInteractiveSessionAndPersistFile() throws Exception {
         RecordingSessionApiClient sessionApiClient = new RecordingSessionApiClient(List.of(
                 session("session-010", "workspace-001")
@@ -249,8 +306,11 @@ class InteractiveCliSessionTest {
     private static final class RecordingRuntimeRunner implements InteractiveRuntimeRunner {
 
         private final AtomicInteger createInitialHistoryCount = new AtomicInteger();
+        private final AtomicInteger activateSkillCount = new AtomicInteger();
         private final AtomicInteger runTurnCount = new AtomicInteger();
         private final List<String> prompts = new ArrayList<>();
+        private final List<String> activatedSkillNames = new ArrayList<>();
+        private final List<List<ConversationMessage>> recordedHistories = new ArrayList<>();
         private boolean failFirstRun;
 
         @Override
@@ -266,6 +326,7 @@ class InteractiveCliSessionTest {
                 String prompt,
                 AgentLoopObserver observer
         ) {
+            recordedHistories.add(List.copyOf(history));
             prompts.add(prompt);
             int invocation = runTurnCount.incrementAndGet();
             if (failFirstRun && invocation == 1) {
@@ -276,6 +337,23 @@ class InteractiveCliSessionTest {
             nextHistory.add(new ConversationMessage(MessageRole.USER, prompt));
             nextHistory.add(new ConversationMessage(MessageRole.ASSISTANT, "分析完成: " + prompt));
             return new InteractiveTurnResult(nextHistory, "分析完成: " + prompt);
+        }
+
+        @Override
+        public InteractiveTurnResult activateSkill(
+                SessionSummary sessionSummary,
+                List<ConversationMessage> history,
+                String skillName
+        ) {
+            activateSkillCount.incrementAndGet();
+            activatedSkillNames.add(skillName);
+
+            List<ConversationMessage> nextHistory = new ArrayList<>(history);
+            nextHistory.add(new ConversationMessage(
+                    MessageRole.SYSTEM,
+                    "# Activated Skill\nname: " + skillName + "\nsource: project\n\n## Skill\n正文"
+            ));
+            return new InteractiveTurnResult(nextHistory, "Skill " + skillName + " 已激活。");
         }
     }
 

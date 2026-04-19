@@ -1,5 +1,6 @@
 package com.repopilot.core.prompt;
 
+import com.repopilot.core.skill.SkillSummary;
 import com.repopilot.core.tool.ToolDefinition;
 import java.util.ArrayList;
 import java.util.List;
@@ -39,7 +40,7 @@ public class SystemPromptBuilder {
 
         appendTextSection(sections, "## 会话前导", dynamicPromptContext.sessionPreamble());
         appendTextSection(sections, "## 工作区信息", dynamicPromptContext.workspaceContext());
-        appendListSection(sections, "## Skill 摘要", dynamicPromptContext.skillSummaries());
+        appendSkillSummarySection(sections, dynamicPromptContext.skillSummaries());
         appendTextSection(sections, "## 预算提示", dynamicPromptContext.budgetHint());
         appendToolSection(sections, dynamicPromptContext.availableTools());
 
@@ -76,16 +77,18 @@ public class SystemPromptBuilder {
         sections.add(title + System.lineSeparator() + value);
     }
 
-    private void appendListSection(List<String> sections, String title, List<String> items) {
-        if (items.isEmpty()) {
+    private void appendSkillSummarySection(List<String> sections, List<SkillSummary> skillSummaries) {
+        if (skillSummaries.isEmpty()) {
             return;
         }
 
-        StringBuilder builder = new StringBuilder(title);
-        for (String item : items) {
+        StringBuilder builder = new StringBuilder("## Skill 摘要");
+        for (SkillSummary skillSummary : skillSummaries) {
+            // 默认 prompt 只看到稳定摘要，
+            // allowed-tools 等约束字段保留在结构化对象里供后续治理链路使用。
             builder.append(System.lineSeparator())
                     .append("- ")
-                    .append(item);
+                    .append(skillSummary.toPromptLine());
         }
         sections.add(builder.toString());
     }
