@@ -57,6 +57,20 @@
 
 **Scope Guardrail:** 只要 `P0 / P1 / P2 / P3 / P4 / P5 / P6 / P7` 还没完成，就不继续推进 `background task`、持久化替换、SSE、模型路由、handoff、ACP、可写型 sub-agent 等横向扩展项；任何不能直接强化 5 条简历亮点之一的任务，一律延后。
 
+**Current Delivery Status (2026-04-20):**
+- 当前项目已经具备“最小 runtime 闭环”，但尚未收口为“可对外宣称完成的 coding agent 产品”。
+- 代码与验证层面已经确认：`mvn test` 全绿；scripted 评测可重复执行；交互式 CLI、session / trace 控制面、`apply_patch` 主链路、Skill 激活与上下文压缩都已落地。
+- scripted 基线报告当前结果为：`scenarioCount=10`、`taskSuccessRate=1.0`、`toolCallValidRate=1.0`、`avgSteps=2.2`、`avgDurationMillis=5.5`。
+- real-model 基线报告当前结果为：`scenarioCount=5`、`taskSuccessRate=1.0`、`toolCallValidRate=1.0`、`avgSteps=3.2`、`avgDurationMillis=14246.2`；其中已包含一条严格验收的端到端编码场景。
+- 当前最准确的外部口径应为：`Java coding agent runtime`、`本地 coding agent 雏形`、`最小 runtime 闭环已具备，产品证据链未完成`。
+- 当前最主要的缺口不是继续扩工具，而是补齐 `Plan / Execute`、确定性循环检测、Skill `allowed-tools` 运行时约束，以及更复杂开放式提示下的补丁精度与回归验证约束。
+
+**Resume-First Closeout Order:**
+1. `P7` 与真实模型最小门槛证据已收口，后续只做增量同步，不再作为收尾阻塞项。
+2. 按 `P2 -> P3 -> P4` 顺序补齐最影响产品可信度的运行时约束。
+3. 继续补更复杂开放式提示下的真实交互验收，验证补丁精度与回归约束。
+4. `P5 / P6` 保留为工程完整度增强项，不再阻塞简历收尾。
+
 ---
 
 ### Task 1: 多模块工程骨架
@@ -296,7 +310,7 @@
 - [x] 明确补丁应用失败时的真实错误语义：上下文不匹配、目标文件不存在、补丁格式非法都直接暴露，不做静默猜测或 heuristics。
 - [x] 让 Console 侧能展示补丁式修改的核心摘要，便于用户观察“本轮到底改了什么”。
 - [x] 补一条最小 smoke path：用户给出编码任务后，agent 至少能完成“搜索 / 阅读 / 补丁修改 / 命令验证 / 返回结果”这条主链路。
-- [ ] 补一条真实模型端到端验收记录，明确输入、工具调用序列、补丁摘要、验证命令、最终回答和失败时真实错误。
+- [x] 补一条真实模型端到端验收记录，明确输入、工具调用序列、补丁摘要、验证命令、最终回答和失败时真实错误。
 - [x] 提供本 task 的交互式终端验收命令、预期现象与观察重点，并在人工确认后再勾选完成。
 
 **Acceptance:**
@@ -317,14 +331,23 @@
 - Create: `repopilot-cli/src/test/java/com/repopilot/cli/eval/EvalRunnerTest.java`
 - Create: `docs/eval/repopilot-eval-scenarios.md`
 
-- [ ] 先定义 10 到 20 个固定本地任务集，优先覆盖最小编码任务闭环，而不是扩成大而全 benchmark。
-- [ ] 基线任务至少覆盖：代码搜索、文件读取、补丁修改、命令验证、Skill 激活、工具失败暴露与上下文压缩。
-- [ ] 先输出 4 个核心指标：`tool_call_valid_rate`、`task_success_rate`、`avg_steps`、`avg_duration`。
-- [ ] 评测报告必须区分 scripted runtime 验证和真实模型 provider 验证，不能把 scripted 成功率写成真实 agent 成功率。
-- [ ] 每个失败任务至少记录失败阶段、最近工具调用、最终错误和最近 trace / checkpoint 引用。
-- [ ] 提供命令行评测入口，能够重复执行同一组任务并输出结构化报告，支持前后版本对比。
-- [ ] 保持评测链路独立于主 runtime，避免为了打分改写主循环语义。
-- [ ] 提供本 task 的交互式终端验收命令、预期现象与观察重点，并在人工确认后再勾选完成。
+- [x] 先定义 10 到 20 个固定本地任务集，优先覆盖最小编码任务闭环，而不是扩成大而全 benchmark。
+- [x] 基线任务至少覆盖：代码搜索、文件读取、补丁修改、命令验证、Skill 激活、工具失败暴露与上下文压缩。
+- [x] 先输出 4 个核心指标：`tool_call_valid_rate`、`task_success_rate`、`avg_steps`、`avg_duration`。
+- [x] 评测报告必须区分 scripted runtime 验证和真实模型 provider 验证，不能把 scripted 成功率写成真实 agent 成功率。
+- [x] 每个失败任务至少记录失败阶段、最近工具调用、最终错误和最近 trace / checkpoint 引用。
+- [x] 提供命令行评测入口，能够重复执行同一组任务并输出结构化报告，支持前后版本对比。
+- [x] 保持评测链路独立于主 runtime，避免为了打分改写主循环语义。
+- [x] 提供本 task 的交互式终端验收命令、预期现象与观察重点，并在人工确认后再勾选完成。
+
+**Acceptance:**
+- Command 1: `mvn -q -DskipTests install`
+- Command 2: `mvn -q -pl repopilot-cli -am -DskipTests dependency:build-classpath -Dmdep.outputFile=target/classpath.txt -Dmdep.includeScope=runtime`
+- Command 3: `CP="repopilot-cli/target/classes:$(cat repopilot-cli/target/classpath.txt)" && java -cp "$CP" com.repopilot.cli.RepoPilotCliApplication eval`
+- Expected: 终端输出 `scenario_count=10 task_success_rate=1.0000 tool_call_valid_rate=1.0000`，并生成 `target/repopilot-eval-report.json`。
+- Command 4: `CP="repopilot-cli/target/classes:$(cat repopilot-cli/target/classpath.txt)" && java -cp "$CP" com.repopilot.cli.RepoPilotCliApplication eval --runtime-kind REAL_MODEL_PROVIDER`
+- Expected: 终端输出 `scenario_count=5 task_success_rate=1.0000 tool_call_valid_rate=1.0000`，并生成 `target/repopilot-real-model-eval-report.json`。
+- Observe: scripted 报告中应看到 `SCRIPTED_RUNTIME`、`10` 个固定场景，以及 `avgSteps=2.2`、`avgDurationMillis=5.5` 的当前 scripted 基线；real-model 报告中应看到 `REAL_MODEL_PROVIDER`、`5` 个固定场景，以及新增的 `search-read-patch-command` 端到端编码任务场景；两套口径必须分离，不能混算。
 
 ### Task 15: Plan / Execute 只读阶段
 
@@ -467,15 +490,24 @@
 - Modify: `docs/superpowers/plans/2026-04-15-repopilot-implementation.md`
 - Create: `docs/eval/reports/repopilot-baseline.md`
 
-- [ ] 补一份面向外部阅读的项目说明，重点说明 RepoPilot 解决的业务问题、最小编码任务闭环与 5 条简历亮点。
-- [ ] README 必须包含当前能力边界：支持小型明确任务，不承诺跨模块重构、长时间调试、模糊需求拆解或产品级全自动交付。
-- [ ] 补一份可重复执行的 demo 脚本，至少演示一次“搜索 / 阅读 / 补丁修改 / 命令验证 / 返回结果”的完整链路。
-- [ ] 产出一份基线评测报告，沉淀当前版本的核心指标，作为后续优化对比基准。
-- [ ] demo 和 baseline report 必须分别标明 scripted adapter 结果和真实模型 provider 结果，避免把测试夹具能力包装成真实模型能力。
-- [ ] 在 README 中明确最小产品 6 项门槛的完成状态，并把未完成项列为后续路线，而不是隐藏在实现细节里。
-- [ ] 把当前进度、完成项与后续里程碑同步回 spec / plan，保证文档和实际代码一致。
-- [ ] 保证阶段收尾时 `mvn test` 通过，并且 README / demo / eval report / 简历表述之间的口径一致。
-- [ ] 提供本 task 的交互式终端验收命令、预期现象与观察重点，并在人工确认后再勾选完成。
+- [x] 补一份面向外部阅读的项目说明，重点说明 RepoPilot 解决的业务问题、最小编码任务闭环与 5 条简历亮点。
+- [x] README 必须包含当前能力边界：支持小型明确任务，不承诺跨模块重构、长时间调试、模糊需求拆解或产品级全自动交付。
+- [x] 补一份可重复执行的 demo 脚本，至少演示一次“搜索 / 阅读 / 补丁修改 / 命令验证 / 返回结果”的完整链路。
+- [x] 产出一份基线评测报告，沉淀当前版本的核心指标，作为后续优化对比基准。
+- [x] demo 和 baseline report 必须分别标明 scripted adapter 结果和真实模型 provider 结果，避免把测试夹具能力包装成真实模型能力。
+- [x] 在 README 中明确最小产品 6 项门槛的完成状态，并把未完成项列为后续路线，而不是隐藏在实现细节里。
+- [x] 把当前进度、完成项与后续里程碑同步回 spec / plan，保证文档和实际代码一致。
+- [x] 保证阶段收尾时 `mvn test` 通过，并且 README / demo / eval report / 简历表述之间的口径一致。
+- [x] 提供本 task 的交互式终端验收命令、预期现象与观察重点，并在人工确认后再勾选完成。
+
+**Acceptance:**
+- Command 1: `mvn test`
+- Command 2: `cd repopilot-server && mvn spring-boot:run`
+- Command 3: `cd .. && mvn -q -DskipTests install && mvn -q -pl repopilot-cli -am -DskipTests dependency:build-classpath -Dmdep.outputFile=target/classpath.txt -Dmdep.includeScope=runtime`
+- Command 4: `CP="repopilot-cli/target/classes:$(cat repopilot-cli/target/classpath.txt)" && java -cp "$CP" com.repopilot.cli.RepoPilotCliApplication eval`
+- Command 5: `CP="repopilot-cli/target/classes:$(cat repopilot-cli/target/classpath.txt)" && java -cp "$CP" com.repopilot.cli.RepoPilotCliApplication eval --runtime-kind REAL_MODEL_PROVIDER`
+- Expected: `mvn test` 全绿；scripted 与 real-model 两套评测都能生成报告；README、demo、baseline 三份文档对当前能力、边界和未完成项的表述一致。
+- Observe: demo 文档既包含通过的真实交互 smoke path，也包含暴露过宽补丁风险的失败样例；口径上不再把 scripted 能力包装成真实产品能力。
 
 ### Phase 2 Preview: 后续扩展项（不占当前阶段关键路径）
 

@@ -173,7 +173,8 @@ public record EvalScenario(
                 realModelCodeSearchScenario(safeModelConfig),
                 realModelFileReadScenario(safeModelConfig),
                 realModelPatchEditScenario(safeModelConfig),
-                realModelCommandValidationScenario(safeModelConfig)
+                realModelCommandValidationScenario(safeModelConfig),
+                realModelSearchReadPatchCommandScenario(safeModelConfig)
         );
     }
 
@@ -437,6 +438,73 @@ public record EvalScenario(
         );
     }
 
+    private static EvalScenario realModelSearchReadPatchCommandScenario(CliModelConfig modelConfig) {
+        return realModel(
+                "search-read-patch-command",
+                "真实模型端到端编码任务",
+                """
+                        请严格按顺序使用工具完成一次最小端到端编码任务：
+                        1) 先只使用 grep_files 在 src 目录搜索 `repopilot-e2e-marker-20260420`，定位目标文件；
+                        2) 再对命中的文件执行 read_file，确认当前内容；
+                        3) 使用 apply_patch 只把 `status=draft` 改成 `status=ready`，除这一行外其他内容必须保持不变；
+                        4) 补丁必须在同一个 @@ hunk 中同时包含上下文行 `name=RepoPilot`、`marker=repopilot-e2e-marker-20260420`、删除行 `-status=draft`、新增行 `+status=ready`；
+                        5) 运行 `grep -n 'status=ready' src/EndToEndDemo.txt` 验证修改结果；
+                        6) 最后用一句话汇报，不要再调用工具。
+                        """,
+                16,
+                // 这个场景的验收需要读取完整 tool_call 参数链路，
+                // 因此这里显式放宽消息窗口，避免默认压缩把前两步 tool_call 折叠掉。
+                new ContextCompactionPolicy(16, 8, 4),
+                workspace -> writeFile(
+                        workspace,
+                        "src/EndToEndDemo.txt",
+                        """
+                                name=RepoPilot
+                                marker=repopilot-e2e-marker-20260420
+                                status=draft
+                                """
+                ),
+                modelConfig,
+                execution -> {
+                    requireToolCallOrder(
+                            execution,
+                            List.of("grep_files", "read_file", "apply_patch", "run_command")
+                    );
+                    requireToolArgumentEquals(execution, "grep_files", "pattern", "repopilot-e2e-marker-20260420");
+                    requireToolArgumentEquals(execution, "grep_files", "path", "src");
+                    requireToolArgumentEquals(execution, "read_file", "path", "src/EndToEndDemo.txt");
+                    requireToolArgumentEquals(execution, "apply_patch", "path", "src/EndToEndDemo.txt");
+                    requireToolArgumentContains(execution, "apply_patch", "patch", "name=RepoPilot");
+                    requireToolArgumentContains(
+                            execution,
+                            "apply_patch",
+                            "patch",
+                            "marker=repopilot-e2e-marker-20260420"
+                    );
+                    requireToolArgumentContains(execution, "apply_patch", "patch", "-status=draft");
+                    requireToolArgumentContains(execution, "apply_patch", "patch", "+status=ready");
+                    requireToolArgumentEquals(
+                            execution,
+                            "run_command",
+                            "command",
+                            "grep -n 'status=ready' src/EndToEndDemo.txt"
+                    );
+                    requireToolMessage(execution, "PATCH_APPLY");
+                    requireToolMessage(execution, "exitCode: 0");
+                    requireFileContent(
+                            execution.workspaceRoot(),
+                            "src/EndToEndDemo.txt",
+                            """
+                                    name=RepoPilot
+                                    marker=repopilot-e2e-marker-20260420
+                                    status=ready
+                                    """
+                    );
+                    requireFinalAnswerContains(execution, "ready");
+                }
+        );
+    }
+
     private static ToolCallModelResponse tool(String id, String toolName, Map<String, String> arguments) {
         return new ToolCallModelResponse(List.of(new ToolCall(id, toolName, arguments)));
     }
@@ -475,6 +543,69 @@ public record EvalScenario(
                 .anyMatch(message -> message.content().contains(expectedText));
         if (!found) {
             throw new IllegalStateException("未在工具消息中找到: " + expectedText);
+        }
+    }
+
+    private static void requireToolCallOrder(ScenarioExecution execution, List<String> expectedToolNames) {
+        // 先只保留真正执行完成的工具事件，
+        // 避免把模型最终回答或其他非工具 trace 混进顺序校验里。
+        List<String> actualToolNames = execution.traceEvents().stream()
+                .filter(event -> event.type().name().equals("TOOL_CALL_COMPLETED"))
+                // 每个 TOOL_CALL_COMPLETED 都带有 toolName 元数据，
+                // 这里逐条取出，保留真实执行顺序。
+                .map(event -> event.metadata().get("toolName"))
+                .toList();
+        if (!actualToolNames.equals(expectedToolNames)) {
+            throw new IllegalStateException("工具调用顺序不符合预期: " + actualToolNames);
+        }
+    }
+
+    private static void requireToolArgumentEquals(
+            ScenarioExecution execution,
+            String toolName,
+            String argumentKey,
+            String expectedValue
+    ) {
+        ToolCall toolCall = requireToolCall(execution, toolName);
+        String actualValue = toolCall.arguments().get(argumentKey);
+        if (!Objects.equals(actualValue, expectedValue)) {
+            throw new IllegalStateException(
+                    "工具参数不符合预期: %s.%s=%s".formatted(toolName, argumentKey, actualValue)
+            );
+        }
+    }
+
+    private static void requireToolArgumentContains(
+            ScenarioExecution execution,
+            String toolName,
+            String argumentKey,
+            String expectedFragment
+    ) {
+        ToolCall toolCall = requireToolCall(execution, toolName);
+        String actualValue = toolCall.arguments().get(argumentKey);
+        if (actualValue == null || !actualValue.contains(expectedFragment)) {
+            throw new IllegalStateException(
+                    "工具参数未包含预期片段: %s.%s".formatted(toolName, argumentKey)
+            );
+        }
+    }
+
+    private static ToolCall requireToolCall(ScenarioExecution execution, String toolName) {
+        // assistant 消息里保存了模型原始发起的 tool_calls，
+        // 这里按消息时间顺序平铺后，才能准确拿到真实请求参数。
+        return execution.agentLoopResult().messages().stream()
+                .flatMap(message -> message.toolCalls().stream())
+                // 每个工具在当前最小场景里只应出现一次，
+                // 因此找到第一个同名调用即可代表该步骤的真实参数。
+                .filter(toolCall -> toolCall.toolName().equals(toolName))
+                .findFirst()
+                .orElseThrow(() -> new IllegalStateException("未找到工具调用: " + toolName));
+    }
+
+    private static void requireFinalAnswerContains(ScenarioExecution execution, String expectedText) {
+        String finalAnswer = execution.agentLoopResult().finalAnswer();
+        if (finalAnswer == null || !finalAnswer.contains(expectedText)) {
+            throw new IllegalStateException("最终回答不符合预期: " + finalAnswer);
         }
     }
 

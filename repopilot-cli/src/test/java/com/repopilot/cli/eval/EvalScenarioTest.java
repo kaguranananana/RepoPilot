@@ -20,7 +20,7 @@ class EvalScenarioTest {
         ));
 
         assertEquals(
-                List.of("code-search", "file-read", "patch-edit", "command-validation"),
+                List.of("code-search", "file-read", "patch-edit", "command-validation", "search-read-patch-command"),
                 scenarios.stream().map(EvalScenario::id).toList()
         );
         assertTrue(scenarios.stream().allMatch(scenario -> scenario.runtimeKind() == EvalScenario.RuntimeKind.REAL_MODEL_PROVIDER));

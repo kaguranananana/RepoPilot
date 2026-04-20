@@ -81,6 +81,7 @@ java -cp "<cli-classpath>" com.repopilot.cli.RepoPilotCliApplication eval --runt
 | `file-read` | 文件读取 | 真实模型按提示选择 `read_file`，并读到真实文件内容。 |
 | `patch-edit` | 补丁修改 | 真实模型构造 `apply_patch` 补丁，把目标文件从 `draft` 改成 `ready`，再运行命令验证。 |
 | `command-validation` | 命令验证 | 真实模型按提示运行 `grep -n 'status=ready'`，且不修改目标文件。 |
+| `search-read-patch-command` | 端到端编码任务 | 真实模型在单一场景里按顺序完成 `grep_files -> read_file -> apply_patch -> run_command -> final`，并通过工具参数、最终文件内容和最终回答三重验收。 |
 
 ## 设计边界
 
