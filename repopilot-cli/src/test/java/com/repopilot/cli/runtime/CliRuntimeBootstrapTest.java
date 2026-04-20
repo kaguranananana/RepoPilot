@@ -55,7 +55,7 @@ class CliRuntimeBootstrapTest {
                 answer
         );
         assertEquals(
-                List.of("read_file", "grep_files", "activate_skill", "write_file", "run_command"),
+                List.of("read_file", "grep_files", "activate_skill", "apply_patch", "write_file", "run_command"),
                 promptBuilder.capturedContext.availableTools().stream().map(tool -> tool.name()).toList()
         );
     }

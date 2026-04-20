@@ -9,6 +9,7 @@ import com.repopilot.core.permission.WorkspacePermissionPolicy;
 import com.repopilot.core.review.DiffReviewService;
 import com.repopilot.core.tool.ToolExecutionResult;
 import com.repopilot.core.tool.ToolRegistry;
+import com.repopilot.core.tool.builtin.ApplyPatchTool;
 import com.repopilot.core.tool.builtin.WriteFileTool;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -136,5 +137,84 @@ class GovernedToolExecutorTest {
         assertEquals(ToolExecutionResult.Status.SUCCESS, result.status());
         assertEquals("已批准写入\n", Files.readString(workspaceRoot.resolve("docs/approved.txt")));
         assertTrue(result.output().contains("已写入文件: docs/approved.txt"));
+    }
+
+    @Test
+    void shouldReturnApprovalRequiredErrorWithDiffSummaryBeforeApplyPatch() throws Exception {
+        Path targetFile = workspaceRoot.resolve("docs/plan.txt");
+        Files.createDirectories(targetFile.getParent());
+        Files.writeString(targetFile, "状态: draft\n");
+        ToolRegistry toolRegistry = new ToolRegistry();
+        AtomicInteger executionCount = new AtomicInteger();
+        toolRegistry.register(
+                "apply_patch",
+                "应用补丁",
+                Map.of("required", List.of("path", "patch")),
+                arguments -> {
+                    executionCount.incrementAndGet();
+                    return ToolExecutionResult.success("patched");
+                }
+        );
+        GovernedToolExecutor governedToolExecutor = new GovernedToolExecutor(
+                toolRegistry,
+                new WorkspacePermissionPolicy(workspaceRoot),
+                new DiffReviewService(workspaceRoot)
+        );
+
+        ToolExecutionResult result = governedToolExecutor.execute(
+                "apply_patch",
+                Map.of(
+                        "path", "docs/plan.txt",
+                        "patch", """
+                                @@
+                                -状态: draft
+                                +状态: ready
+                                """
+                )
+        );
+
+        assertEquals(ToolExecutionResult.Status.RECOVERABLE_ERROR, result.status());
+        assertTrue(result.output().contains("需要审批"));
+        assertTrue(result.output().contains("docs/plan.txt"));
+        assertTrue(result.output().contains("DIFF_REVIEW"));
+        assertTrue(result.output().contains("addedLineCount: 1"));
+        assertTrue(result.output().contains("removedLineCount: 1"));
+        assertEquals(0, executionCount.get());
+    }
+
+    @Test
+    void shouldExecuteApplyPatchAfterApprovalAccepted() throws Exception {
+        Path targetFile = workspaceRoot.resolve("docs/approved.txt");
+        Files.createDirectories(targetFile.getParent());
+        Files.writeString(targetFile, "审批: pending\n");
+        ToolRegistry toolRegistry = new ToolRegistry();
+        toolRegistry.register(
+                "apply_patch",
+                "应用补丁",
+                Map.of("required", List.of("path", "patch")),
+                new ApplyPatchTool(workspaceRoot)
+        );
+        GovernedToolExecutor governedToolExecutor = new GovernedToolExecutor(
+                toolRegistry,
+                new WorkspacePermissionPolicy(workspaceRoot),
+                new DiffReviewService(workspaceRoot),
+                request -> ToolApprovalHandler.ApprovalDecision.approve("用户已批准")
+        );
+
+        ToolExecutionResult result = governedToolExecutor.execute(
+                "apply_patch",
+                Map.of(
+                        "path", "docs/approved.txt",
+                        "patch", """
+                                @@
+                                -审批: pending
+                                +审批: approved
+                                """
+                )
+        );
+
+        assertEquals(ToolExecutionResult.Status.SUCCESS, result.status());
+        assertEquals("审批: approved\n", Files.readString(targetFile));
+        assertTrue(result.output().contains("PATCH_APPLY"));
     }
 }

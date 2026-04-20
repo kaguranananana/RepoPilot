@@ -209,6 +209,8 @@ public final class GovernedToolExecutor {
             try {
                 DiffReviewSummary diffReviewSummary = diffReviewService.review(toolDefinition.name(), arguments);
                 reviewSummary = diffReviewSummary.summary();
+            } catch (DiffReviewService.DiffReviewFailure exception) {
+                return ToolExecutionResult.recoverableError("生成 diff 审查摘要失败: " + exception.getMessage());
             } catch (RuntimeException exception) {
                 return ToolExecutionResult.fatalError("生成 diff 审查摘要失败: " + exception.getMessage());
             }

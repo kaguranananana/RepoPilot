@@ -279,6 +279,12 @@
 - [ ] 补一条最小 smoke path：用户给出编码任务后，agent 至少能完成“搜索 / 阅读 / 补丁修改 / 命令验证 / 返回结果”这条主链路。
 - [ ] 提供本 task 的交互式终端验收命令、预期现象与观察重点，并在人工确认后再勾选完成。
 
+**Acceptance:**
+- Command: `mvn -pl repopilot-core,repopilot-cli -am -Dsurefire.failIfNoSpecifiedTests=false -Dtest=PatchApplyServiceTest,ApplyPatchToolTest,DiffReviewServiceTest,WorkspacePermissionPolicyTest,BuiltinToolRegistrarTest,GovernedToolExecutorTest,AgentLoopCodingTaskSmokeTest,ConsoleTraceObserverTest,CliRuntimeBootstrapTest test`
+- Expected: 补丁服务、`apply_patch` 工具、权限审批、diff review、内置工具注册、Console 摘要、CLI prompt 工具暴露和最小编码任务 smoke path 全部通过。
+- Observe: `AgentLoopCodingTaskSmokeTest` 会按顺序走过 `grep_files -> read_file -> apply_patch -> run_command -> final answer`，并验证目标文件确实被补丁式修改；`ConsoleTraceObserverTest` 会展示 `apply_patch path=... changeType=... +N/-N` 摘要；`GovernedToolExecutorTest` 会证明 `apply_patch` 进入审批与 diff review 后才执行。
+- Real Model E2E Gate: 启动真实控制面和交互式 CLI，使用真实模型 provider 发起一个小型编码任务，观察 trace 中出现搜索、读取、补丁、命令验证和最终回答；如果当前环境缺少真实模型凭据或网络，该 task 自动化已通过但整体完成状态仍保持 blocked，不能勾选完成。
+
 ### Task 14: 最小评估链路
 
 **Files:**

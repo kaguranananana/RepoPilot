@@ -78,6 +78,42 @@ class ConsoleTraceObserverTest {
     }
 
     @Test
+    void shouldSummarizeApplyPatchArgumentsAndResult() {
+        ByteArrayOutputStream outputStream = new ByteArrayOutputStream();
+        PrintWriter outputWriter = new PrintWriter(outputStream, true, StandardCharsets.UTF_8);
+        ConsoleTraceObserver observer = new ConsoleTraceObserver(outputWriter);
+
+        observer.onToolExecutionStarted(
+                1,
+                new ToolCall("call-1", "apply_patch", Map.of(
+                        "path", "docs/notes.txt",
+                        "patch", """
+                                @@
+                                -old
+                                +new
+                                """
+                ))
+        );
+        observer.onToolExecutionFinished(
+                1,
+                new ToolCall("call-1", "apply_patch", Map.of("path", "docs/notes.txt")),
+                ToolExecutionResult.success("""
+                        PATCH_APPLY
+                        path: docs/notes.txt
+                        changeType: MODIFY
+                        beforeLineCount: 2
+                        afterLineCount: 2
+                        addedLineCount: 1
+                        removedLineCount: 1
+                        """)
+        );
+
+        String output = outputStream.toString(StandardCharsets.UTF_8);
+        assertTrue(output.contains("[tool] apply_patch path=docs/notes.txt"));
+        assertTrue(output.contains("[tool:success] apply_patch path=docs/notes.txt changeType=MODIFY +1/-1"));
+    }
+
+    @Test
     void shouldPrintGrepFilesFatalErrorInsteadOfFakeHitCount() {
         ByteArrayOutputStream outputStream = new ByteArrayOutputStream();
         PrintWriter outputWriter = new PrintWriter(outputStream, true, StandardCharsets.UTF_8);

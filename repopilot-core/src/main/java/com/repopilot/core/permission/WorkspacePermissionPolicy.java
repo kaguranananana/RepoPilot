@@ -24,6 +24,7 @@ public final class WorkspacePermissionPolicy implements PermissionPolicy {
     );
     private static final Set<String> APPROVAL_REQUIRED_TOOLS = Set.of(
             "run_command",
+            "apply_patch",
             "write_file"
     );
 
@@ -75,6 +76,7 @@ public final class WorkspacePermissionPolicy implements PermissionPolicy {
     private String resolveApprovalReason(String toolName) {
         return switch (toolName) {
             case "run_command" -> "命令执行属于高风险能力，当前阶段必须先审批。";
+            case "apply_patch" -> "补丁式修改会变更工作区文件，必须先生成 diff 摘要并等待审批。";
             case "write_file" -> "写文件操作必须先生成 diff 摘要并等待审批。";
             default -> throw new IllegalArgumentException("Unsupported approval-required tool: " + toolName);
         };

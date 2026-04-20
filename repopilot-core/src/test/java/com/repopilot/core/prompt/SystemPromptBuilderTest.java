@@ -77,6 +77,27 @@ class SystemPromptBuilderTest {
     }
 
     @Test
+    void shouldPositionRepoPilotAsPatchFirstCodingAgent() {
+        SystemPromptBuilder builder = new SystemPromptBuilder();
+
+        SystemPromptBoundary boundary = builder.build(new DynamicPromptContext(
+                "任务",
+                "workspace",
+                List.of(),
+                "预算",
+                List.of(),
+                Map.of()
+        ));
+
+        assertTrue(boundary.baseInstructions().contains("grep_files -> read_file -> apply_patch -> run_command"));
+        assertTrue(boundary.baseInstructions().contains("修改已有文件必须优先使用 apply_patch"));
+        assertTrue(boundary.baseInstructions().contains("不得改用 write_file"));
+        assertTrue(boundary.baseInstructions().contains("@@"));
+        assertTrue(boundary.baseInstructions().contains("-旧行"));
+        assertTrue(boundary.baseInstructions().contains("+新行"));
+    }
+
+    @Test
     void shouldRenderPlaceholderWhenSessionInstructionsAreEmpty() {
         SystemPromptBuilder builder = new SystemPromptBuilder();
 

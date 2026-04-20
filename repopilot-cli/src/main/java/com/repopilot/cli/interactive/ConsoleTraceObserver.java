@@ -24,6 +24,10 @@ import java.util.regex.Pattern;
 public final class ConsoleTraceObserver implements AgentLoopObserver {
 
     private static final Pattern EXIT_CODE_PATTERN = Pattern.compile("exitCode:\\s*(\\d+)");
+    private static final Pattern PATCH_PATH_PATTERN = Pattern.compile("path:\\s*(.+)");
+    private static final Pattern PATCH_CHANGE_TYPE_PATTERN = Pattern.compile("changeType:\\s*(\\S+)");
+    private static final Pattern PATCH_ADDED_LINE_COUNT_PATTERN = Pattern.compile("addedLineCount:\\s*(\\d+)");
+    private static final Pattern PATCH_REMOVED_LINE_COUNT_PATTERN = Pattern.compile("removedLineCount:\\s*(\\d+)");
     private static final int MESSAGE_PREVIEW_LIMIT = 120;
     private final PrintWriter outputWriter;
     private final TraceLevel traceLevel;
@@ -128,6 +132,7 @@ public final class ConsoleTraceObserver implements AgentLoopObserver {
         return switch (toolCall.toolName()) {
             case "read_file" -> "path=" + arguments.getOrDefault("path", "");
             case "grep_files" -> renderGrepArgumentSummary(arguments);
+            case "apply_patch" -> "path=" + arguments.getOrDefault("path", "");
             case "write_file" -> "path=" + arguments.getOrDefault("path", "");
             case "run_command" -> "command=" + arguments.getOrDefault("command", "");
             default -> arguments.toString();
@@ -163,6 +168,7 @@ public final class ConsoleTraceObserver implements AgentLoopObserver {
         return switch (toolName) {
             case "read_file" -> summarizeReadFile(output);
             case "grep_files" -> summarizeGrepFiles(output);
+            case "apply_patch" -> summarizeApplyPatch(output);
             case "write_file" -> output;
             case "run_command" -> summarizeRunCommand(output);
             default -> output.length() + " chars";
@@ -194,6 +200,27 @@ public final class ConsoleTraceObserver implements AgentLoopObserver {
             return "exitCode=" + matcher.group(1);
         }
         return "exitCode=unknown";
+    }
+
+    private String summarizeApplyPatch(String output) {
+        String path = extractFirstMatch(PATCH_PATH_PATTERN, output, "unknown");
+        String changeType = extractFirstMatch(PATCH_CHANGE_TYPE_PATTERN, output, "unknown");
+        String addedLineCount = extractFirstMatch(PATCH_ADDED_LINE_COUNT_PATTERN, output, "0");
+        String removedLineCount = extractFirstMatch(PATCH_REMOVED_LINE_COUNT_PATTERN, output, "0");
+        return "path=%s changeType=%s +%s/-%s".formatted(
+                path,
+                changeType,
+                addedLineCount,
+                removedLineCount
+        );
+    }
+
+    private String extractFirstMatch(Pattern pattern, String output, String defaultValue) {
+        Matcher matcher = pattern.matcher(output);
+        if (matcher.find()) {
+            return matcher.group(1).strip();
+        }
+        return defaultValue;
     }
 
     private String renderMessageBlock(int messageIndex, ConversationMessage message) {

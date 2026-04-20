@@ -81,11 +81,33 @@ public final class BuiltinToolRegistrar {
                 new ActivateSkillTool(skillLoader)
         );
 
+        // 补丁式编辑优先于整文件覆盖暴露，
+        // 让编码任务主链路默认倾向于最小修改。
+        toolRegistry.register(
+                "apply_patch",
+                "对已有单个 UTF-8 文本文件应用精确 @@ hunk 补丁；patch 第一行必须是 @@，上下文行以空格开头，删除行写 -旧行，新增行写 +新行",
+                Map.of(
+                        "type", "object",
+                        "properties", Map.of(
+                                "path", Map.of(
+                                        "type", "string",
+                                        "description", "要修改的工作区文件路径"
+                                ),
+                                "patch", Map.of(
+                                        "type", "string",
+                                        "description", "严格补丁文本，示例: @@\\n 上下文行\\n-旧行\\n+新行。不要包裹 Markdown 代码块，不要添加文件路径头。"
+                                )
+                        ),
+                        "required", List.of("path", "patch")
+                ),
+                new ApplyPatchTool(workspaceRoot)
+        );
+
         // 再注册写文件工具，
-        // 让模型在明确审批通过后能够把产出真正落到工作区。
+        // 让模型在确实需要整文件产出时仍可走审批后的写入能力。
         toolRegistry.register(
                 "write_file",
-                "向单个 UTF-8 文本文件写入完整内容",
+                "向单个 UTF-8 文本文件写入完整内容；仅用于新建文件或用户明确要求整文件覆盖，修改已有文件应优先使用 apply_patch",
                 Map.of(
                         "type", "object",
                         "properties", Map.of(

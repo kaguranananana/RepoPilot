@@ -87,6 +87,30 @@ class WorkspacePermissionPolicyTest {
     }
 
     @Test
+    void shouldAskBeforeAllowingApplyPatch() {
+        PermissionPolicy permissionPolicy = new WorkspacePermissionPolicy(workspaceRoot);
+
+        PermissionPolicy.PermissionDecision decision = permissionPolicy.evaluate(
+                new ToolDefinition(
+                        "apply_patch",
+                        "应用补丁",
+                        Map.of("required", List.of("path", "patch"))
+                ),
+                Map.of(
+                        "path", "docs/notes.txt",
+                        "patch", """
+                                @@
+                                -old
+                                +new
+                                """
+                )
+        );
+
+        assertEquals(PermissionPolicy.PermissionDisposition.ASK, decision.disposition());
+        assertTrue(decision.reason().contains("补丁"));
+    }
+
+    @Test
     void shouldDenyUnknownToolByDefault() {
         PermissionPolicy permissionPolicy = new WorkspacePermissionPolicy(workspaceRoot);
 

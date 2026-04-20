@@ -1,5 +1,8 @@
 package com.repopilot.core.review;
 
+import com.repopilot.core.edit.PatchApplyRequest;
+import com.repopilot.core.edit.PatchApplyResult;
+import com.repopilot.core.edit.PatchApplyService;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Map;
@@ -21,7 +24,7 @@ public final class DiffReviewService {
     }
 
     public boolean requiresReview(String toolName) {
-        return "write_file".equals(toolName);
+        return "write_file".equals(toolName) || "apply_patch".equals(toolName);
     }
 
     public DiffReviewSummary review(String toolName, Map<String, String> arguments) {
@@ -30,6 +33,10 @@ public final class DiffReviewService {
 
         if (!requiresReview(toolName)) {
             throw new IllegalArgumentException("Tool does not require diff review: " + toolName);
+        }
+
+        if ("apply_patch".equals(toolName)) {
+            return reviewApplyPatch(safeArguments);
         }
 
         // 写盘审查必须拿到明确的 path 和 content，
@@ -80,6 +87,50 @@ public final class DiffReviewService {
                 afterLineCount,
                 summary
         );
+    }
+
+    private DiffReviewSummary reviewApplyPatch(Map<String, String> arguments) {
+        String pathArgument = requireNonBlankArgument(arguments, "path");
+        String patchArgument = requireNonBlankArgument(arguments, "patch");
+
+        try {
+            PatchApplyResult patchResult = new PatchApplyService(workspaceRoot)
+                    .preview(new PatchApplyRequest(pathArgument, patchArgument));
+            ChangeType changeType = switch (patchResult.changeType()) {
+                case MODIFY -> ChangeType.MODIFY;
+                case NO_CHANGES -> ChangeType.NO_CHANGES;
+            };
+            String summary = """
+                    DIFF_REVIEW
+                    tool: apply_patch
+                    path: %s
+                    changeType: %s
+                    beforeLineCount: %d
+                    afterLineCount: %d
+                    addedLineCount: %d
+                    removedLineCount: %d
+                    """.formatted(
+                    patchResult.displayPath(),
+                    changeType.name(),
+                    patchResult.beforeLineCount(),
+                    patchResult.afterLineCount(),
+                    patchResult.addedLineCount(),
+                    patchResult.removedLineCount()
+            ).stripTrailing();
+
+            return new DiffReviewSummary(
+                    patchResult.displayPath(),
+                    changeType,
+                    patchResult.beforeLineCount(),
+                    patchResult.afterLineCount(),
+                    summary
+            );
+        } catch (PatchApplyService.PatchApplyException exception) {
+            throw new DiffReviewFailure(
+                    "apply_patch %s: %s".formatted(exception.errorType().name(), exception.getMessage()),
+                    exception
+            );
+        }
     }
 
     private String readExistingContent(Path targetFile) {
@@ -133,6 +184,13 @@ public final class DiffReviewService {
         CREATE,
         MODIFY,
         NO_CHANGES
+    }
+
+    public static final class DiffReviewFailure extends RuntimeException {
+
+        private DiffReviewFailure(String message, Throwable cause) {
+            super(message, cause);
+        }
     }
 
     /**

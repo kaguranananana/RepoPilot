@@ -55,4 +55,35 @@ class DiffReviewServiceTest {
         assertEquals(3, summary.afterLineCount());
         assertTrue(summary.summary().contains("MODIFY"));
     }
+
+    @Test
+    void shouldSummarizeApplyPatchOperationWithoutWritingFile() throws Exception {
+        Path targetFile = workspaceRoot.resolve("docs/notes.txt");
+        Files.createDirectories(targetFile.getParent());
+        Files.writeString(targetFile, "第一行\n第二行\n");
+
+        DiffReviewService diffReviewService = new DiffReviewService(workspaceRoot);
+
+        DiffReviewService.DiffReviewSummary summary = diffReviewService.review(
+                "apply_patch",
+                Map.of(
+                        "path", "docs/notes.txt",
+                        "patch", """
+                                @@
+                                 第一行
+                                -第二行
+                                +第二行-已更新
+                                """
+                )
+        );
+
+        assertEquals(DiffReviewService.ChangeType.MODIFY, summary.changeType());
+        assertEquals("docs/notes.txt", summary.displayPath());
+        assertEquals(2, summary.beforeLineCount());
+        assertEquals(2, summary.afterLineCount());
+        assertTrue(summary.summary().contains("DIFF_REVIEW"));
+        assertTrue(summary.summary().contains("addedLineCount: 1"));
+        assertTrue(summary.summary().contains("removedLineCount: 1"));
+        assertEquals("第一行\n第二行\n", Files.readString(targetFile));
+    }
 }
