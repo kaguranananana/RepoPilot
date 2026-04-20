@@ -85,6 +85,7 @@ class ActivateSkillToolTest {
                         # Activated Skill
                         name: debug
                         source: project
+                        allowed-tools: read_file
 
                         ## Debug Skill
                         先复现，再缩小范围。

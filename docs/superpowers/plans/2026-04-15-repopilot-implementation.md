@@ -411,24 +411,29 @@
 ### Task 17: Skill `allowed-tools` 运行时治理
 
 **Files:**
-- Modify: `repopilot-core/src/main/java/com/repopilot/core/skill/SkillSummary.java`
-- Modify: `repopilot-core/src/main/java/com/repopilot/core/skill/SkillDescriptor.java`
-- Modify: `repopilot-core/src/main/java/com/repopilot/core/skill/SkillIndex.java`
-- Modify: `repopilot-core/src/main/java/com/repopilot/core/prompt/SystemPromptBuilder.java`
+- Modify: `repopilot-core/src/main/java/com/repopilot/core/skill/SkillActivationService.java`
+- Modify: `repopilot-core/src/main/java/com/repopilot/core/skill/ActivatedSkillSet.java`
 - Modify: `repopilot-core/src/main/java/com/repopilot/core/tool/governance/GovernedToolExecutor.java`
-- Modify: `repopilot-cli/src/main/java/com/repopilot/cli/runtime/CliRuntimeBootstrap.java`
+- Modify: `repopilot-cli/src/main/java/com/repopilot/cli/runtime/OpenAiCompatibleChatModelAdapter.java`
 - Modify: `repopilot-cli/src/main/java/com/repopilot/cli/interactive/DefaultInteractiveRuntimeRunner.java`
 - Create: `repopilot-core/src/test/java/com/repopilot/core/skill/SkillAllowedToolsIntegrationTest.java`
-- Modify: `repopilot-core/src/test/java/com/repopilot/core/skill/SkillLoaderTest.java`
-- Modify: `repopilot-core/src/test/java/com/repopilot/core/prompt/SystemPromptBuilderTest.java`
+- Modify: `repopilot-core/src/test/java/com/repopilot/core/skill/SkillActivationServiceTest.java`
+- Modify: `repopilot-core/src/test/java/com/repopilot/core/tool/builtin/ActivateSkillToolTest.java`
 - Modify: `repopilot-core/src/test/java/com/repopilot/core/tool/governance/GovernedToolExecutorTest.java`
+- Modify: `repopilot-cli/src/test/java/com/repopilot/cli/runtime/OpenAiCompatibleChatModelAdapterTest.java`
+- Modify: `repopilot-cli/src/test/java/com/repopilot/cli/interactive/InteractiveRuntimeRunnerTest.java`
 
-- [ ] 计算激活 Skill 后的有效工具集合，规则固定为 `global policy ∩ skill allowed-tools`。
-- [ ] 让 prompt 中的“可用工具子集”只暴露有效工具集合，避免模型继续看到超出 Skill 边界的工具。
-- [ ] 让运行时治理层也按同一集合做强约束，避免 Skill 只影响提示词、不影响真实执行。
-- [ ] 明确缺失 `allowed-tools` 时的行为：默认继续沿用全局工具集，而不是猜测或自动缩放。
-- [ ] 补充端到端测试，覆盖“只读 Skill 无法触发补丁修改 / 跑命令”“重复激活不改变结果”“缺失 Skill 继续显式报错”。
-- [ ] 提供本 task 的交互式终端验收命令、预期现象与观察重点，并在人工确认后再勾选完成。
+- [x] 计算激活 Skill 后的有效工具集合，规则固定为 `global policy ∩ skill allowed-tools`。
+- [x] 让 prompt 中的“可用工具子集”只暴露有效工具集合，避免模型继续看到超出 Skill 边界的工具。
+- [x] 让运行时治理层也按同一集合做强约束，避免 Skill 只影响提示词、不影响真实执行。
+- [x] 明确缺失 `allowed-tools` 时的行为：默认继续沿用全局工具集，而不是猜测或自动缩放。
+- [x] 补充端到端测试，覆盖“只读 Skill 无法触发补丁修改 / 跑命令”“重复激活不改变结果”“缺失 Skill 继续显式报错”。
+- [x] 提供本 task 的交互式终端验收命令、预期现象与观察重点，并在人工确认后再勾选完成。
+
+**Acceptance:**
+- Command: `mvn -pl repopilot-core,repopilot-cli -am -Dsurefire.failIfNoSpecifiedTests=false -Dtest=SkillActivationServiceTest,SkillAllowedToolsIntegrationTest,ActivateSkillToolTest,GovernedToolExecutorTest,OpenAiCompatibleChatModelAdapterTest,InteractiveRuntimeRunnerTest test`
+- Expected: 涉及 Skill 激活消息快照、`allowed-tools` 交集求值、模型可见工具过滤、交互式 prompt 刷新、运行时硬拒越权工具的定向测试全部通过。
+- Observe: 多个已激活 Skill 同时存在时，最终可用工具应收缩为交集；未声明 `allowed-tools` 的 Skill 不额外收缩工具集；模型请求超出交集的工具时，治理层返回显式 `recoverable error`，而不是继续执行。
 
 ### Task 18: 命令执行后端抽象与验证链路
 

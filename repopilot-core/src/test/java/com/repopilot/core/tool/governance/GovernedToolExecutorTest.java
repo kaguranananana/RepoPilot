@@ -3,10 +3,13 @@ package com.repopilot.core.tool.governance;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import com.repopilot.core.model.ConversationMessage;
+import com.repopilot.core.model.MessageRole;
 import com.repopilot.core.approval.ToolApprovalHandler;
 import com.repopilot.core.permission.PermissionPolicy;
 import com.repopilot.core.permission.WorkspacePermissionPolicy;
 import com.repopilot.core.review.DiffReviewService;
+import com.repopilot.core.tool.ToolExecutionContext;
 import com.repopilot.core.tool.ToolExecutionResult;
 import com.repopilot.core.tool.ToolRegistry;
 import com.repopilot.core.tool.builtin.ApplyPatchTool;
@@ -216,5 +219,60 @@ class GovernedToolExecutorTest {
         assertEquals(ToolExecutionResult.Status.SUCCESS, result.status());
         assertEquals("审批: approved\n", Files.readString(targetFile));
         assertTrue(result.output().contains("PATCH_APPLY"));
+    }
+
+    @Test
+    void shouldRejectToolOutsideActivatedSkillAllowedTools() {
+        ToolRegistry toolRegistry = new ToolRegistry();
+        AtomicInteger executionCount = new AtomicInteger();
+        toolRegistry.register(
+                "read_file",
+                "读取文件",
+                Map.of("required", List.of("path")),
+                arguments -> ToolExecutionResult.success("read")
+        );
+        toolRegistry.register(
+                "grep_files",
+                "搜索文件",
+                Map.of("required", List.of("pattern")),
+                arguments -> ToolExecutionResult.success("grep")
+        );
+        toolRegistry.register(
+                "run_command",
+                "执行命令",
+                Map.of("required", List.of("command")),
+                arguments -> {
+                    executionCount.incrementAndGet();
+                    return ToolExecutionResult.success("should-not-run");
+                }
+        );
+        GovernedToolExecutor governedToolExecutor = new GovernedToolExecutor(
+                toolRegistry,
+                PermissionPolicy.allowAll(),
+                new DiffReviewService(workspaceRoot)
+        );
+
+        ToolExecutionResult result = governedToolExecutor.execute(
+                new ToolExecutionContext(List.of(new ConversationMessage(
+                        MessageRole.SYSTEM,
+                        """
+                                # Activated Skill
+                                name: readonly
+                                source: project
+                                allowed-tools: read_file, grep_files
+
+                                ## Readonly Skill
+                                只读分析。
+                                """.strip()
+                ))),
+                "run_command",
+                Map.of("command", "echo hi")
+        );
+
+        assertEquals(ToolExecutionResult.Status.RECOVERABLE_ERROR, result.status());
+        assertTrue(result.output().contains("当前激活 Skill 不允许工具: run_command"));
+        assertTrue(result.output().contains("read_file"));
+        assertTrue(result.output().contains("grep_files"));
+        assertEquals(0, executionCount.get());
     }
 }

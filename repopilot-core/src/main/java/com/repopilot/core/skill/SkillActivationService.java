@@ -51,20 +51,34 @@ public final class SkillActivationService {
         // 这里按固定格式构造激活消息，
         // 第一行固定声明这是 Activated Skill，
         // 第二、三行固定写 name 和 source，
-        // 最后再拼完整正文，确保后续可从历史中可靠重建激活状态。
+        // 第四行固定写 allowed-tools 快照，
+        // 最后再拼完整正文，确保后续可从历史中可靠重建激活状态与工具约束。
         String content = """
                 # Activated Skill
                 name: %s
                 source: %s
+                allowed-tools: %s
 
                 %s
                 """.formatted(
                 descriptor.name(),
                 descriptor.source(),
+                renderAllowedTools(descriptor.allowedTools()),
                 skillContent.body()
         ).strip();
 
         return new ConversationMessage(MessageRole.SYSTEM, content);
+    }
+
+    private String renderAllowedTools(List<String> allowedTools) {
+        if (allowedTools == null || allowedTools.isEmpty()) {
+            return "";
+        }
+
+        // 激活消息里把约束工具快照直接摊平成一行，
+        // 这样后续只靠消息历史就能重建 Skill 工具边界，
+        // 不需要再回头重新读磁盘上的 SKILL.md。
+        return String.join(", ", allowedTools);
     }
 
     private String requireNonBlank(String value, String message) {

@@ -18,6 +18,7 @@ import com.repopilot.core.skill.SkillActivationResult;
 import com.repopilot.core.skill.SkillActivationService;
 import com.repopilot.core.skill.SkillLoader;
 import com.repopilot.core.trace.TracePublisher;
+import com.repopilot.core.tool.ToolDefinition;
 import com.repopilot.core.tool.ToolRegistry;
 import com.repopilot.core.tool.builtin.BuiltinToolRegistrar;
 import com.repopilot.core.tool.governance.GovernedToolExecutor;
@@ -112,8 +113,7 @@ public final class DefaultInteractiveRuntimeRunner implements InteractiveRuntime
         Objects.requireNonNull(sessionSummary, "sessionSummary must not be null.");
 
         ToolRegistry toolRegistry = createToolRegistry();
-        SystemPromptBoundary promptBoundary = systemPromptBuilder.build(buildDynamicPromptContext(sessionSummary, toolRegistry));
-        return buildInitialMessages(promptBoundary);
+        return rebuildPromptBoundary(sessionSummary, List.of(), toolRegistry);
     }
 
     @Override
@@ -131,7 +131,8 @@ public final class DefaultInteractiveRuntimeRunner implements InteractiveRuntime
         String safePrompt = requireNonBlank(prompt, "prompt must not be blank.");
 
         ToolRegistry toolRegistry = createToolRegistry();
-        List<ConversationMessage> messages = new ArrayList<>(history);
+        List<ConversationMessage> refreshedHistory = rebuildPromptBoundary(sessionSummary, history, toolRegistry);
+        List<ConversationMessage> messages = new ArrayList<>(refreshedHistory);
 
         // 每次新输入都只追加一条新的 USER 消息，
         // 前面的 SYSTEM / USER / ASSISTANT / TOOL 历史保持原样继续复用。
@@ -145,7 +146,7 @@ public final class DefaultInteractiveRuntimeRunner implements InteractiveRuntime
         );
         AgentLoop agentLoop = new AgentLoop(governedToolExecutor, observer, tracePublisher);
         AgentLoopResult result = agentLoop.run(new AgentLoopRequest(
-                modelAdapterFactory.create(sessionSummary, toolRegistry.list()),
+                modelAdapterFactory.create(sessionSummary, resolveEffectiveTools(refreshedHistory, toolRegistry)),
                 messages,
                 maxSteps
         ));
@@ -182,7 +183,7 @@ public final class DefaultInteractiveRuntimeRunner implements InteractiveRuntime
 
     private DynamicPromptContext buildDynamicPromptContext(
             SessionSummary sessionSummary,
-            ToolRegistry toolRegistry
+            List<ToolDefinition> availableTools
     ) {
         return new DynamicPromptContext(
                 // 这里把 session 身份单独写进动态段，
@@ -195,12 +196,80 @@ public final class DefaultInteractiveRuntimeRunner implements InteractiveRuntime
                 "workspaceId=%s".formatted(sessionSummary.workspaceId()),
                 skillLoader.loadIndex().summaries(),
                 "maxSteps=%d".formatted(maxSteps),
-                toolRegistry.list(),
+                availableTools,
                 Map.of(
                         "sessionId", sessionSummary.sessionId(),
                         "startedAt", Instant.now(clock).toString()
                 )
         );
+    }
+
+    private List<ConversationMessage> rebuildPromptBoundary(
+            SessionSummary sessionSummary,
+            List<ConversationMessage> history,
+            ToolRegistry toolRegistry
+    ) {
+        // 先把旧的基础 prompt 和运行时上下文剥掉，
+        // 避免每轮重建时把旧边界一层层叠加进历史。
+        List<ConversationMessage> preservedHistory = stripPromptBoundaryMessages(history);
+        // 再根据“剥离后的真实会话历史”重算当前有效工具子集，
+        // 这样中途激活 Skill 后，下一轮 prompt 能立即收缩工具说明。
+        List<ToolDefinition> effectiveTools = resolveEffectiveTools(preservedHistory, toolRegistry);
+        // 用最新 session 信息和最新工具子集重建 prompt 边界，
+        // 保证模型每轮看到的 system prompt 都和当前约束一致。
+        SystemPromptBoundary promptBoundary = systemPromptBuilder.build(
+                buildDynamicPromptContext(sessionSummary, effectiveTools)
+        );
+
+        // 最后把新边界放回最前面，
+        // 再拼接真正需要保留的历史消息，形成下一轮完整上下文。
+        List<ConversationMessage> nextHistory = new ArrayList<>(buildInitialMessages(promptBoundary));
+        nextHistory.addAll(preservedHistory);
+        return List.copyOf(nextHistory);
+    }
+
+    private List<ToolDefinition> resolveEffectiveTools(
+            List<ConversationMessage> history,
+            ToolRegistry toolRegistry
+    ) {
+        // 先拿到 runtime 当前注册的全局工具定义，
+        // 这是任何 Skill 约束计算的上界。
+        List<ToolDefinition> globalTools = toolRegistry.list();
+        // 再把消息历史里的已激活 Skill 约束折叠成最终允许工具名集合，
+        // 规则固定为“全局工具 ∩ 所有受约束 Skill 的 allowed-tools 交集”。
+        List<String> effectiveToolNames = ActivatedSkillSet.fromMessages(history)
+                .resolveEffectiveAllowedTools(globalTools.stream().map(ToolDefinition::name).toList());
+
+        // 最后回到完整 ToolDefinition 列表，
+        // 只把仍然留在有效子集里的定义传给 prompt 和模型适配层。
+        return globalTools.stream()
+                .filter(toolDefinition -> effectiveToolNames.contains(toolDefinition.name()))
+                .toList();
+    }
+
+    private List<ConversationMessage> stripPromptBoundaryMessages(List<ConversationMessage> history) {
+        if (history.isEmpty()) {
+            return List.of();
+        }
+
+        // 这里只剥离由当前 runner 自动生成的两条 prompt 边界消息，
+        // 用户历史、模型输出、工具结果、Activated Skill 记录都必须完整保留。
+        int index = 0;
+        if (index < history.size() && isBasePromptMessage(history.get(index))) {
+            index += 1;
+        }
+        if (index < history.size() && isRuntimeContextMessage(history.get(index))) {
+            index += 1;
+        }
+        return List.copyOf(history.subList(index, history.size()));
+    }
+
+    private boolean isBasePromptMessage(ConversationMessage message) {
+        return message.role() == MessageRole.SYSTEM && message.content().contains("# 基础指令");
+    }
+
+    private boolean isRuntimeContextMessage(ConversationMessage message) {
+        return message.role() == MessageRole.SYSTEM && message.content().contains("# 运行时上下文");
     }
 
     private List<ConversationMessage> buildInitialMessages(SystemPromptBoundary promptBoundary) {

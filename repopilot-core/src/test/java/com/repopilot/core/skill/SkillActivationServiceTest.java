@@ -26,6 +26,9 @@ class SkillActivationServiceTest {
                         ---
                         name: debug
                         description: 结构化排查测试失败
+                        allowed-tools:
+                          - read_file
+                          - grep_files
                         ---
                         """,
                 "## Debug Skill\n先复现，再缩小范围。\n"
@@ -42,6 +45,7 @@ class SkillActivationServiceTest {
         assertTrue(activatedMessage.content().contains("# Activated Skill"));
         assertTrue(activatedMessage.content().contains("name: debug"));
         assertTrue(activatedMessage.content().contains("source: project"));
+        assertTrue(activatedMessage.content().contains("allowed-tools: read_file, grep_files"));
         assertTrue(activatedMessage.content().contains("## Debug Skill"));
     }
 

@@ -8,6 +8,7 @@ import com.repopilot.core.permission.PermissionPolicy.PermissionDecision;
 import com.repopilot.core.permission.PermissionPolicy.PermissionDisposition;
 import com.repopilot.core.review.DiffReviewService;
 import com.repopilot.core.review.DiffReviewService.DiffReviewSummary;
+import com.repopilot.core.skill.ActivatedSkillSet;
 import com.repopilot.core.tool.ToolDefinition;
 import com.repopilot.core.tool.ToolExecutionContext;
 import com.repopilot.core.tool.ToolExecutionResult;
@@ -109,6 +110,11 @@ public final class GovernedToolExecutor {
             return preHookFailure;
         }
 
+        ToolExecutionResult allowedToolsFailure = validateActivatedSkillAllowedTools(executionContext, toolDefinition);
+        if (allowedToolsFailure != null) {
+            return allowedToolsFailure;
+        }
+
         PermissionDecision permissionDecision;
         try {
             permissionDecision = permissionPolicy.evaluate(toolDefinition, safeArguments);
@@ -170,6 +176,43 @@ public final class GovernedToolExecutor {
             }
         }
         return null;
+    }
+
+    private ToolExecutionResult validateActivatedSkillAllowedTools(
+            ToolExecutionContext executionContext,
+            ToolDefinition toolDefinition
+    ) {
+        // 先从当前执行上下文消息里恢复已激活 Skill 集合，
+        // 这样显式用户激活和模型内工具激活都走同一条事实来源。
+        ActivatedSkillSet activatedSkillSet = ActivatedSkillSet.fromMessages(executionContext.messages());
+        List<String> constrainedSkillNames = activatedSkillSet.constrainedSkillNames();
+        // 没有任何 Skill 显式声明 allowed-tools 时，
+        // 治理层不额外收缩工具集，继续沿用全局注册结果。
+        if (constrainedSkillNames.isEmpty()) {
+            return null;
+        }
+
+        // 有约束 Skill 时，再把全局工具名和 Skill 声明做交集，
+        // 算出当前这次执行真正允许使用的工具子集。
+        List<String> effectiveToolNames = activatedSkillSet.resolveEffectiveAllowedTools(
+                toolRegistry.list().stream().map(ToolDefinition::name).toList()
+        );
+        // 当前工具仍在子集里就放行，
+        // 后续权限策略和审批逻辑继续按原链路执行。
+        if (effectiveToolNames.contains(toolDefinition.name())) {
+            return null;
+        }
+
+        // 一旦超出子集边界，直接返回可恢复错误，
+        // 明确暴露“哪一个工具被拒绝、哪些 Skill 施加了约束、有效子集是什么”。
+        String renderedToolSubset = effectiveToolNames.isEmpty() ? "(none)" : String.join(", ", effectiveToolNames);
+        return ToolExecutionResult.recoverableError(
+                "当前激活 Skill 不允许工具: %s。受约束 Skill: %s。有效工具子集: %s".formatted(
+                        toolDefinition.name(),
+                        String.join(", ", constrainedSkillNames),
+                        renderedToolSubset
+                )
+        );
     }
 
     private ToolExecutionResult runPreExecutionHooks(ToolDefinition toolDefinition, Map<String, String> arguments) {

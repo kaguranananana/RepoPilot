@@ -1,6 +1,7 @@
 package com.repopilot.cli.runtime;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -205,6 +206,62 @@ class OpenAiCompatibleChatModelAdapterTest {
         assertTrue(lastRequestBody.contains("\"tool_calls\""));
         assertTrue(lastRequestBody.contains("\"tool_call_id\":\"call-001\""));
         assertTrue(lastRequestBody.contains("\"role\":\"tool\""));
+    }
+
+    @Test
+    void shouldFilterToolSchemaAfterActivatedSkillMessagesAppearInHistory() throws Exception {
+        httpServer.createContext("/chat/completions", exchange -> {
+            lastRequestBody = new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8);
+
+            respondJson(exchange, """
+                    {
+                      "id": "chatcmpl-003b",
+                      "choices": [
+                        {
+                          "index": 0,
+                          "message": {
+                            "role": "assistant",
+                            "content": "继续分析"
+                          }
+                        }
+                      ]
+                    }
+                    """);
+        });
+        httpServer.start();
+
+        OpenAiCompatibleChatModelAdapter adapter = new OpenAiCompatibleChatModelAdapter(
+                "test-key",
+                baseUrl,
+                "kimi-k2.5",
+                List.of(
+                        new ToolDefinition("read_file", "读取文件", Map.of("type", "object")),
+                        new ToolDefinition("grep_files", "搜索文件", Map.of("type", "object")),
+                        new ToolDefinition("run_command", "执行命令", Map.of("type", "object"))
+                )
+        );
+
+        ModelResponse response = adapter.next(List.of(
+                new ConversationMessage(
+                        MessageRole.SYSTEM,
+                        """
+                                # Activated Skill
+                                name: readonly
+                                source: project
+                                allowed-tools: read_file, grep_files
+
+                                ## Readonly Skill
+                                先阅读，再总结。
+                                """.strip()
+                ),
+                new ConversationMessage(MessageRole.USER, "继续分析 pom.xml")
+        ));
+
+        FinalModelResponse finalResponse = assertInstanceOf(FinalModelResponse.class, response);
+        assertEquals("继续分析", finalResponse.message());
+        assertTrue(lastRequestBody.contains("\"name\":\"read_file\""));
+        assertTrue(lastRequestBody.contains("\"name\":\"grep_files\""));
+        assertFalse(lastRequestBody.contains("\"name\":\"run_command\""));
     }
 
     @Test

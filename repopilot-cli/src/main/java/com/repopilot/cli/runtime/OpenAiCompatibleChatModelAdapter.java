@@ -9,6 +9,7 @@ import com.repopilot.core.model.ModelAdapter;
 import com.repopilot.core.model.ModelResponse;
 import com.repopilot.core.model.ToolCall;
 import com.repopilot.core.model.ToolCallModelResponse;
+import com.repopilot.core.skill.ActivatedSkillSet;
 import com.repopilot.core.tool.ToolDefinition;
 import com.repopilot.protocol.json.ProtocolObjectMapperFactory;
 import java.io.IOException;
@@ -21,6 +22,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 
 /**
  * OpenAI 兼容非流式聊天模型适配器。
@@ -101,8 +103,11 @@ public final class OpenAiCompatibleChatModelAdapter implements ModelAdapter {
         requestBody.put("model", modelName);
         requestBody.put("stream", false);
         requestBody.put("messages", mapMessages(messages));
-        if (!availableTools.isEmpty()) {
-            requestBody.put("tools", mapTools());
+        // tool schema 不能只看构造时注入的全局工具，
+        // 必须结合当前消息历史里的已激活 Skill 重新计算一次可见工具子集。
+        List<ToolDefinition> visibleTools = resolveVisibleTools(messages);
+        if (!visibleTools.isEmpty()) {
+            requestBody.put("tools", mapTools(visibleTools));
         }
         return objectMapper.writeValueAsString(requestBody);
     }
@@ -172,10 +177,29 @@ public final class OpenAiCompatibleChatModelAdapter implements ModelAdapter {
         return List.copyOf(apiToolCalls);
     }
 
-    private List<Map<String, Object>> mapTools() {
-        List<Map<String, Object>> tools = new ArrayList<>(availableTools.size());
+    private List<ToolDefinition> resolveVisibleTools(List<ConversationMessage> messages) {
+        if (availableTools.isEmpty()) {
+            return List.of();
+        }
 
-        for (ToolDefinition toolDefinition : availableTools) {
+        List<String> effectiveToolNames = ActivatedSkillSet.fromMessages(messages)
+                .resolveEffectiveAllowedTools(availableTools.stream().map(ToolDefinition::name).toList());
+        Set<String> effectiveToolNameSet = Set.copyOf(effectiveToolNames);
+
+        // 当前轮次到底把哪些工具暴露给模型，
+        // 由消息历史里的已激活 Skill 约束实时计算，
+        // 这样 Skill 在会话中途激活后，下一轮 tool schema 就能立即收窄。
+        return availableTools.stream()
+                .filter(toolDefinition -> effectiveToolNameSet.contains(toolDefinition.name()))
+                .toList();
+    }
+
+    private List<Map<String, Object>> mapTools(List<ToolDefinition> toolDefinitions) {
+        List<Map<String, Object>> tools = new ArrayList<>(toolDefinitions.size());
+
+        for (ToolDefinition toolDefinition : toolDefinitions) {
+            // 每个暴露给模型的工具都必须带完整 schema，
+            // 否则模型即使看到了工具名，也无法形成稳定可执行的参数结构。
             if (toolDefinition.parametersSchema().isEmpty()) {
                 throw new IllegalStateException("Tool schema must not be empty: " + toolDefinition.name());
             }

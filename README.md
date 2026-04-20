@@ -165,15 +165,14 @@ java -cp "$CP" com.repopilot.cli.RepoPilotCliApplication eval --runtime-kind REA
 - [x] 固定任务集评测可重复执行
 - [ ] `Plan / Execute` 只读阶段落地
 - [ ] 确定性循环检测进入运行时
-- [ ] Skill `allowed-tools` 进入 prompt + runtime 双重约束
+- [x] Skill `allowed-tools` 进入 prompt + runtime 双重约束
 - [x] README / demo / baseline / 简历口径完全一致并收口
 
 当前仍未过线的关键项不是继续加工具，而是：
 
 1. `Plan / Execute`
 2. 确定性循环检测
-3. Skill `allowed-tools` 运行时治理
-4. 更复杂开放式提示下的补丁精度与回归验证约束
+3. 更复杂开放式提示下的补丁精度与回归验证约束
 
 ## 面试表述建议
 
