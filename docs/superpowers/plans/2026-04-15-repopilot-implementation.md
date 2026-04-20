@@ -4,7 +4,7 @@
 
 **Goal:** 在已跑通最小主链路的基础上，把 RepoPilot 收束成一个真正面向“本地代码仓编码任务”的 Java Coding Agent 项目；当前阶段必须先补齐最小编码任务闭环，再把成果收束成 5 个可直接写进简历的亮点。
 
-**Architecture:** `repopilot-protocol` 继续承载共享协议，`repopilot-core` 作为最小 ReAct Runtime 保留工具治理、上下文压缩、Skill 加载，并补齐“搜索 / 阅读 / 补丁式修改 / 验证执行”这条编码任务主链路；`repopilot-cli` 负责交互入口、评测运行器与执行后端装配，`repopilot-server` 保持 session / trace 最小控制面。当前阶段不继续横向铺控制面功能，而是优先把最小业务闭环跑通、结果可量化、亮点可收束。
+**Architecture:** `repopilot-protocol` 继续承载共享协议，`repopilot-core` 作为最小 ReAct Runtime 保留工具治理、上下文压缩、Skill 加载，并补齐“搜索 / 阅读 / 补丁式修改 / 验证执行”这条编码任务主链路；`repopilot-cli` 负责交互入口、评测运行器、Plan / Execute 模式入口与执行后端装配，`repopilot-server` 保持 session / trace 最小控制面。当前阶段不继续横向铺控制面功能，而是优先把最小业务闭环跑通、结果可量化、运行时空转可检测、状态锚点可回放、亮点可收束。
 
 **Tech Stack:** Java 17, Maven, Spring Boot 3, Jackson, Picocli, JDK HttpClient, JUnit 5
 
@@ -22,6 +22,22 @@
 
 如果这条业务闭环没有跑通，当前阶段即使有 Skill、评测或控制面增强，也不能算完成。
 
+**Current Capability Boundary:**
+- 当前只承诺“小型、明确、受控”的本地编码任务。
+- 支持目标优先限定为单文件或少量文件局部修改、明确报错定位、小功能补齐和命令验证。
+- 当前不承诺稳定完成跨模块重构、长时间调试、多阶段产品功能、模糊需求拆解或大范围架构迁移。
+- scripted `ModelAdapter` 只能证明 runtime 路径；真实 coding agent 能力必须由真实模型 provider 的端到端验收和固定任务集评测证明。
+
+**Minimum Product Gate:**
+1. 真实模型 provider 跑通一次小型编码任务端到端链路，包含搜索、读取、补丁、命令验证和最终回答。
+2. 至少 10 到 20 个固定本地任务可重复执行，并输出 `task_success_rate`、`tool_call_valid_rate`、`avg_steps`、`avg_duration`。
+3. Plan / Execute 只读阶段进入 prompt 和 runtime 双重约束。
+4. 确定性循环检测能中断连续重复工具调用，并在 trace 中留下原因。
+5. Skill `allowed-tools` 进入 prompt 可见工具和 runtime 可执行工具的双重约束。
+6. README、demo 脚本、baseline report 和 spec / plan 对当前支持范围、非目标和指标口径保持一致。
+
+只要上面 6 项没有全部满足，项目状态只能标记为“最小 runtime 闭环已具备，最小产品证据链未完成”，不能标记为“coding agent 产品完成”。
+
 **Current Resume Highlights:**
 1. 编码任务端到端闭环
 2. 工具治理与安全边界
@@ -32,11 +48,14 @@
 **Current Focus:**
 1. `P0` 补丁式代码编辑与最小编码任务闭环：先把业务主链路补完整。
 2. `P1` 最小离线评测链路：把当前 Runtime 能力转成可重复执行的量化指标。
-3. `P2` Skill `allowed-tools` 运行时治理：把 Skill 从上下文注入推进到有效工具子集约束。
-4. `P3` 命令执行后端抽象：收敛 `run_command` 的协议边界与真实执行承载。
-5. `P4` README / demo / 基线报告收尾：把已有能力沉淀成可以直接支撑简历表述的证据。
+3. `P2` Plan / Execute 只读阶段：把成熟 coding agent 的“先探索再执行”落成显式权限模式。
+4. `P3` 确定性循环检测：在 `maxSteps` 之外识别连续重复工具调用，并把真实循环原因暴露给用户和 trace。
+5. `P4` Skill `allowed-tools` 运行时治理：把 Skill 从上下文注入推进到有效工具子集约束。
+6. `P5` 命令执行后端抽象：收敛 `run_command` 的协议边界与真实执行承载。
+7. `P6` 轻量 checkpoint 与 trace checkpoint：为长回合压缩、失败定位和评测报告提供状态锚点，不做文件系统自动回滚。
+8. `P7` README / demo / 基线报告收尾：把已有能力沉淀成可以直接支撑简历表述的证据。
 
-**Scope Guardrail:** 只要 `P0 / P1 / P2 / P3 / P4` 还没完成，就不继续推进 `background task`、持久化替换、SSE、模型路由、handoff、ACP 等横向扩展项；任何不能直接强化 5 条简历亮点之一的任务，一律延后。
+**Scope Guardrail:** 只要 `P0 / P1 / P2 / P3 / P4 / P5 / P6 / P7` 还没完成，就不继续推进 `background task`、持久化替换、SSE、模型路由、handoff、ACP、可写型 sub-agent 等横向扩展项；任何不能直接强化 5 条简历亮点之一的任务，一律延后。
 
 ---
 
@@ -272,12 +291,13 @@
 - Create: `repopilot-core/src/test/java/com/repopilot/core/tool/builtin/ApplyPatchToolTest.java`
 - Modify: `repopilot-core/src/test/java/com/repopilot/core/tool/governance/GovernedToolExecutorTest.java`
 
-- [ ] 新增补丁式编辑原语，支持在工作区内对单文件执行最小文本补丁，而不是只能整文件覆盖写入。
-- [ ] 让 `apply_patch` 进入现有工具治理链路，复用路径边界、审批挂点与 diff review，而不是绕开现有安全边界。
-- [ ] 明确补丁应用失败时的真实错误语义：上下文不匹配、目标文件不存在、补丁格式非法都直接暴露，不做静默猜测或 heuristics。
-- [ ] 让 Console 侧能展示补丁式修改的核心摘要，便于用户观察“本轮到底改了什么”。
-- [ ] 补一条最小 smoke path：用户给出编码任务后，agent 至少能完成“搜索 / 阅读 / 补丁修改 / 命令验证 / 返回结果”这条主链路。
-- [ ] 提供本 task 的交互式终端验收命令、预期现象与观察重点，并在人工确认后再勾选完成。
+- [x] 新增补丁式编辑原语，支持在工作区内对单文件执行最小文本补丁，而不是只能整文件覆盖写入。
+- [x] 让 `apply_patch` 进入现有工具治理链路，复用路径边界、审批挂点与 diff review，而不是绕开现有安全边界。
+- [x] 明确补丁应用失败时的真实错误语义：上下文不匹配、目标文件不存在、补丁格式非法都直接暴露，不做静默猜测或 heuristics。
+- [x] 让 Console 侧能展示补丁式修改的核心摘要，便于用户观察“本轮到底改了什么”。
+- [x] 补一条最小 smoke path：用户给出编码任务后，agent 至少能完成“搜索 / 阅读 / 补丁修改 / 命令验证 / 返回结果”这条主链路。
+- [ ] 补一条真实模型端到端验收记录，明确输入、工具调用序列、补丁摘要、验证命令、最终回答和失败时真实错误。
+- [x] 提供本 task 的交互式终端验收命令、预期现象与观察重点，并在人工确认后再勾选完成。
 
 **Acceptance:**
 - Command: `mvn -pl repopilot-core,repopilot-cli -am -Dsurefire.failIfNoSpecifiedTests=false -Dtest=PatchApplyServiceTest,ApplyPatchToolTest,DiffReviewServiceTest,WorkspacePermissionPolicyTest,BuiltinToolRegistrarTest,GovernedToolExecutorTest,AgentLoopCodingTaskSmokeTest,ConsoleTraceObserverTest,CliRuntimeBootstrapTest test`
@@ -300,11 +320,72 @@
 - [ ] 先定义 10 到 20 个固定本地任务集，优先覆盖最小编码任务闭环，而不是扩成大而全 benchmark。
 - [ ] 基线任务至少覆盖：代码搜索、文件读取、补丁修改、命令验证、Skill 激活、工具失败暴露与上下文压缩。
 - [ ] 先输出 4 个核心指标：`tool_call_valid_rate`、`task_success_rate`、`avg_steps`、`avg_duration`。
+- [ ] 评测报告必须区分 scripted runtime 验证和真实模型 provider 验证，不能把 scripted 成功率写成真实 agent 成功率。
+- [ ] 每个失败任务至少记录失败阶段、最近工具调用、最终错误和最近 trace / checkpoint 引用。
 - [ ] 提供命令行评测入口，能够重复执行同一组任务并输出结构化报告，支持前后版本对比。
 - [ ] 保持评测链路独立于主 runtime，避免为了打分改写主循环语义。
 - [ ] 提供本 task 的交互式终端验收命令、预期现象与观察重点，并在人工确认后再勾选完成。
 
-### Task 15: Skill `allowed-tools` 运行时治理
+### Task 15: Plan / Execute 只读阶段
+
+**Files:**
+- Create: `repopilot-core/src/main/java/com/repopilot/core/agent/AgentRunMode.java`
+- Modify: `repopilot-core/src/main/java/com/repopilot/core/agent/AgentLoopRequest.java`
+- Modify: `repopilot-core/src/main/java/com/repopilot/core/prompt/SystemPromptBuilder.java`
+- Modify: `repopilot-core/src/main/java/com/repopilot/core/tool/governance/GovernedToolExecutor.java`
+- Modify: `repopilot-core/src/main/java/com/repopilot/core/permission/WorkspacePermissionPolicy.java`
+- Create: `repopilot-cli/src/main/java/com/repopilot/cli/interactive/InteractionMode.java`
+- Modify: `repopilot-cli/src/main/java/com/repopilot/cli/interactive/InteractiveCliSession.java`
+- Modify: `repopilot-cli/src/main/java/com/repopilot/cli/interactive/ConsoleTraceObserver.java`
+- Modify: `repopilot-cli/src/main/java/com/repopilot/cli/interactive/DefaultInteractiveRuntimeRunner.java`
+- Create: `repopilot-core/src/test/java/com/repopilot/core/agent/AgentRunModeTest.java`
+- Create: `repopilot-core/src/test/java/com/repopilot/core/agent/PlanModeToolGovernanceTest.java`
+- Modify: `repopilot-core/src/test/java/com/repopilot/core/prompt/SystemPromptBuilderTest.java`
+- Modify: `repopilot-cli/src/test/java/com/repopilot/cli/interactive/InteractiveCliSessionTest.java`
+- Modify: `repopilot-cli/src/test/java/com/repopilot/cli/interactive/ConsoleTraceObserverTest.java`
+
+- [ ] 新增显式运行模式，至少区分 `PLAN` 与 `EXECUTE`，默认模式必须是 `EXECUTE`。
+- [ ] 在交互式 CLI 中提供 `/plan` 显式入口，进入 Plan 模式后打印当前模式和只读边界。
+- [ ] Plan 模式只暴露只读工具子集，例如 `grep_files`、`read_file`；写入型工具不进入 prompt 的可用工具列表。
+- [ ] 运行时治理层在 Plan 模式下硬拒 `apply_patch`、`write_file` 等写入工具，不能通过审批绕过只读边界。
+- [ ] Plan 模式输出实施计划和证据摘要，用户确认或显式退出后才进入 Execute 模式执行修改。
+- [ ] 明确不做复杂 planner、多层任务树或自然语言自动切换模式；模式切换必须来自显式命令。
+- [ ] 提供本 task 的交互式终端验收命令、预期现象与观察重点，并在人工确认后再勾选完成。
+
+**Acceptance:**
+- Command: `mvn -pl repopilot-core,repopilot-cli -am -Dsurefire.failIfNoSpecifiedTests=false -Dtest=AgentRunModeTest,PlanModeToolGovernanceTest,SystemPromptBuilderTest,InteractiveCliSessionTest,ConsoleTraceObserverTest test`
+- Expected: Plan 模式枚举、prompt 工具子集、运行时硬拒写工具、CLI `/plan` 入口和 Console 模式摘要全部通过。
+- Observe: 进入 `/plan` 后，终端明确显示只读模式；模型只能看到只读工具；如果模型仍请求 `apply_patch` 或 `write_file`，治理层返回明确拒绝原因，而不是进入审批或执行。
+- Real Model E2E Gate: 启动真实控制面和交互式 CLI，输入 `/plan <一个小型改动需求>`，观察模型先搜索/读取并输出计划，不出现写入工具调用；再显式进入执行阶段完成修改。
+
+### Task 16: 确定性循环检测
+
+**Files:**
+- Create: `repopilot-core/src/main/java/com/repopilot/core/agent/loop/ToolCallLoopDetector.java`
+- Create: `repopilot-core/src/main/java/com/repopilot/core/agent/loop/ToolCallLoopDetectionResult.java`
+- Modify: `repopilot-core/src/main/java/com/repopilot/core/agent/AgentLoop.java`
+- Modify: `repopilot-core/src/main/java/com/repopilot/core/agent/AgentLoopRequest.java`
+- Modify: `repopilot-protocol/src/main/java/com/repopilot/protocol/trace/TraceEventType.java`
+- Modify: `repopilot-cli/src/main/java/com/repopilot/cli/interactive/ConsoleTraceObserver.java`
+- Create: `repopilot-core/src/test/java/com/repopilot/core/agent/loop/ToolCallLoopDetectorTest.java`
+- Create: `repopilot-core/src/test/java/com/repopilot/core/agent/AgentLoopLoopDetectionTest.java`
+- Modify: `repopilot-core/src/test/java/com/repopilot/core/trace/TracePublishingAgentLoopTest.java`
+- Modify: `repopilot-cli/src/test/java/com/repopilot/cli/interactive/ConsoleTraceObserverTest.java`
+
+- [ ] 为工具调用生成稳定 key，规则固定为 `toolName + canonicalArguments`，参数顺序必须稳定。
+- [ ] 只检测连续重复的同一工具调用 key，达到显式阈值后中断当前回合。
+- [ ] 循环检测结果必须写入 trace，至少包含 step、toolName、重复次数和参数摘要。
+- [ ] 用户侧错误必须明确说明“连续重复工具调用导致终止”，不能表现成普通工具失败或成功回答。
+- [ ] 默认阈值写进 `AgentLoopRequest` 或明确配置对象，测试中必须能固定阈值。
+- [ ] 一期不做 LLM 语义循环判断、不做内容 chanting 检测、不做自动换策略的启发式修复。
+- [ ] 提供本 task 的交互式终端验收命令、预期现象与观察重点，并在人工确认后再勾选完成。
+
+**Acceptance:**
+- Command: `mvn -pl repopilot-core,repopilot-cli,repopilot-protocol -am -Dsurefire.failIfNoSpecifiedTests=false -Dtest=ToolCallLoopDetectorTest,AgentLoopLoopDetectionTest,TracePublishingAgentLoopTest,ConsoleTraceObserverTest test`
+- Expected: 稳定 key、连续重复计数、阈值中断、trace 事件和 CLI 摘要全部通过。
+- Observe: scripted model 连续请求同一 `read_file` 或 `grep_files` 参数时，Runtime 在阈值触发点终止，并输出可读的 loop detected 摘要。
+
+### Task 17: Skill `allowed-tools` 运行时治理
 
 **Files:**
 - Modify: `repopilot-core/src/main/java/com/repopilot/core/skill/SkillSummary.java`
@@ -326,7 +407,7 @@
 - [ ] 补充端到端测试，覆盖“只读 Skill 无法触发补丁修改 / 跑命令”“重复激活不改变结果”“缺失 Skill 继续显式报错”。
 - [ ] 提供本 task 的交互式终端验收命令、预期现象与观察重点，并在人工确认后再勾选完成。
 
-### Task 16: 命令执行后端抽象与验证链路
+### Task 18: 命令执行后端抽象与验证链路
 
 **Files:**
 - Modify: `repopilot-core/src/main/java/com/repopilot/core/tool/builtin/RunCommandTool.java`
@@ -348,7 +429,36 @@
 - [ ] 在 CLI/bootstrap 层明确选择执行 backend，并保证默认行为是显式配置而不是隐式 fallback。
 - [ ] 提供本 task 的交互式终端验收命令、预期现象与观察重点，并在人工确认后再勾选完成。
 
-### Task 17: 演示与简历证据收尾
+### Task 19: 轻量 Checkpoint 与 Trace Checkpoint
+
+**Files:**
+- Modify: `repopilot-protocol/src/main/java/com/repopilot/protocol/trace/TraceEventType.java`
+- Create: `repopilot-core/src/main/java/com/repopilot/core/checkpoint/RuntimeCheckpoint.java`
+- Create: `repopilot-core/src/main/java/com/repopilot/core/checkpoint/RuntimeCheckpointRecorder.java`
+- Modify: `repopilot-core/src/main/java/com/repopilot/core/agent/AgentLoop.java`
+- Modify: `repopilot-core/src/main/java/com/repopilot/core/context/WorkingMemorySnapshot.java`
+- Modify: `repopilot-core/src/main/java/com/repopilot/core/context/ContextCompactor.java`
+- Modify: `repopilot-cli/src/main/java/com/repopilot/cli/eval/EvalResult.java`
+- Modify: `repopilot-cli/src/main/java/com/repopilot/cli/eval/EvalReportWriter.java`
+- Create: `repopilot-core/src/test/java/com/repopilot/core/checkpoint/RuntimeCheckpointRecorderTest.java`
+- Create: `repopilot-core/src/test/java/com/repopilot/core/agent/AgentLoopCheckpointTraceTest.java`
+- Modify: `repopilot-core/src/test/java/com/repopilot/core/context/ContextCompactorTest.java`
+- Modify: `repopilot-cli/src/test/java/com/repopilot/cli/eval/EvalReportWriterTest.java`
+
+- [ ] 在关键 step 前创建轻量 checkpoint id，并写入 trace。
+- [ ] checkpoint 只绑定运行时状态：step、消息数量、`working_memory` 快照摘要、最近关键工具结果和 trace 位置。
+- [ ] 上下文压缩完成后必须能引用最近 checkpoint id，便于回放时定位压缩前状态。
+- [ ] 评测报告中保留失败任务的最近 checkpoint id，方便后续复现。
+- [ ] 明确不做文件系统自动回滚、不做命令级 undo/redo、不做 D-Mail 式时间旅行。
+- [ ] checkpoint 记录失败必须暴露真实错误，不能静默跳过并继续宣称回放可用。
+- [ ] 提供本 task 的交互式终端验收命令、预期现象与观察重点，并在人工确认后再勾选完成。
+
+**Acceptance:**
+- Command: `mvn -pl repopilot-core,repopilot-cli,repopilot-protocol -am -Dsurefire.failIfNoSpecifiedTests=false -Dtest=RuntimeCheckpointRecorderTest,AgentLoopCheckpointTraceTest,ContextCompactorTest,EvalReportWriterTest test`
+- Expected: checkpoint id 生成、trace 记录、上下文压缩引用和评测报告失败定位全部通过。
+- Observe: 长回合触发压缩或失败时，trace 中能看到最近 checkpoint，报告中能定位失败发生前的运行时状态锚点。
+
+### Task 20: 演示与简历证据收尾
 
 **Files:**
 - Create: `README.md`
@@ -358,8 +468,11 @@
 - Create: `docs/eval/reports/repopilot-baseline.md`
 
 - [ ] 补一份面向外部阅读的项目说明，重点说明 RepoPilot 解决的业务问题、最小编码任务闭环与 5 条简历亮点。
+- [ ] README 必须包含当前能力边界：支持小型明确任务，不承诺跨模块重构、长时间调试、模糊需求拆解或产品级全自动交付。
 - [ ] 补一份可重复执行的 demo 脚本，至少演示一次“搜索 / 阅读 / 补丁修改 / 命令验证 / 返回结果”的完整链路。
 - [ ] 产出一份基线评测报告，沉淀当前版本的核心指标，作为后续优化对比基准。
+- [ ] demo 和 baseline report 必须分别标明 scripted adapter 结果和真实模型 provider 结果，避免把测试夹具能力包装成真实模型能力。
+- [ ] 在 README 中明确最小产品 6 项门槛的完成状态，并把未完成项列为后续路线，而不是隐藏在实现细节里。
 - [ ] 把当前进度、完成项与后续里程碑同步回 spec / plan，保证文档和实际代码一致。
 - [ ] 保证阶段收尾时 `mvn test` 通过，并且 README / demo / eval report / 简历表述之间的口径一致。
 - [ ] 提供本 task 的交互式终端验收命令、预期现象与观察重点，并在人工确认后再勾选完成。
@@ -387,7 +500,10 @@
 
 **进入 Phase 2 的前提：**
 - 已有基线评测报告
+- Plan / Execute 只读阶段已进入 prompt 与 runtime 双重约束
+- 确定性循环检测已能在 trace 中暴露空转原因
 - Skill `allowed-tools` 已经进入 prompt 与 runtime 双重约束
+- 轻量 checkpoint 已能支撑失败定位和压缩回放
 - README / demo / 主计划与代码状态保持一致
 
 - [ ] 二期实现工具手册时，优先做 `tool_search` 或等价的按需加载机制，不把所有工具说明全文塞进 system prompt。
