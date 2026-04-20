@@ -4,6 +4,9 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.repopilot.cli.RepoPilotCliCommand;
+import com.repopilot.cli.runtime.CliRuntimeBootstrap;
+import com.repopilot.cli.session.SessionApiClient;
+import com.repopilot.core.trace.TracePublisher;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
 import java.io.ByteArrayOutputStream;
@@ -11,12 +14,17 @@ import java.io.IOException;
 import java.io.PrintWriter;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import picocli.CommandLine;
+import com.repopilot.protocol.session.CreateSessionRequest;
+import com.repopilot.protocol.session.SessionStatus;
+import com.repopilot.protocol.session.SessionSummary;
+import com.repopilot.protocol.trace.TraceEventRecord;
 
 class RunCommandTest {
 
@@ -102,11 +110,82 @@ class RunCommandTest {
         );
     }
 
+    @Test
+    void shouldPassExplicitMaxStepsToRuntimeBootstrap() {
+        CapturingRuntimeBootstrap runtimeBootstrap = new CapturingRuntimeBootstrap();
+        RunCommand command = new RunCommand(
+                baseUrl -> new FixedSessionApiClient(),
+                baseUrl -> (sessionId, request) -> new TraceEventRecord(
+                        "trace-001",
+                        sessionId,
+                        request.type(),
+                        request.source(),
+                        request.summary(),
+                        request.occurredAt(),
+                        request.metadata()
+                ),
+                runtimeBootstrap
+        );
+        ByteArrayOutputStream outputStream = new ByteArrayOutputStream();
+        CommandLine commandLine = new CommandLine(command);
+        commandLine.setOut(new PrintWriter(outputStream, true, StandardCharsets.UTF_8));
+
+        int exitCode = commandLine.execute(
+                "--workspace-id", "workspace-001",
+                "--server-base-url", "http://127.0.0.1:8080",
+                "--prompt", "分析 pom.xml",
+                "--max-steps", "16"
+        );
+
+        assertEquals(0, exitCode);
+        assertEquals(16, runtimeBootstrap.maxSteps);
+        assertEquals("分析 pom.xml", runtimeBootstrap.prompt);
+        assertEquals("ok", outputStream.toString(StandardCharsets.UTF_8).trim());
+    }
+
     private void respondJson(HttpExchange exchange, String responseBody) throws IOException {
         byte[] body = responseBody.getBytes(StandardCharsets.UTF_8);
         exchange.getResponseHeaders().add("Content-Type", "application/json");
         exchange.sendResponseHeaders(200, body.length);
         exchange.getResponseBody().write(body);
         exchange.close();
+    }
+
+    private static final class FixedSessionApiClient implements SessionApiClient {
+
+        @Override
+        public SessionSummary createSession(CreateSessionRequest request) {
+            return new SessionSummary(
+                    "session-001",
+                    request.workspaceId(),
+                    request.requestedBy(),
+                    SessionStatus.CREATED,
+                    Instant.parse("2026-04-20T08:00:00Z"),
+                    Instant.parse("2026-04-20T08:00:00Z")
+            );
+        }
+
+        @Override
+        public SessionSummary getSession(String sessionId) {
+            throw new UnsupportedOperationException("测试不需要查询 session。");
+        }
+    }
+
+    private static final class CapturingRuntimeBootstrap implements CliRuntimeBootstrap {
+
+        private String prompt;
+        private int maxSteps;
+
+        @Override
+        public String run(
+                SessionSummary sessionSummary,
+                String prompt,
+                TracePublisher tracePublisher,
+                int maxSteps
+        ) {
+            this.prompt = prompt;
+            this.maxSteps = maxSteps;
+            return "ok";
+        }
     }
 }

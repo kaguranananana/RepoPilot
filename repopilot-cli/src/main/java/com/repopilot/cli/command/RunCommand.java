@@ -51,6 +51,13 @@ public class RunCommand implements Callable<Integer> {
     )
     private String prompt;
 
+    @Option(
+            names = "--max-steps",
+            defaultValue = "12",
+            description = "本轮 AgentLoop 的最大模型步数。"
+    )
+    private int maxSteps;
+
     @Spec
     private CommandSpec spec;
 
@@ -81,6 +88,7 @@ public class RunCommand implements Callable<Integer> {
         String safeWorkspaceId = requireNonBlank(workspaceId, "workspaceId must not be blank.");
         String safeServerBaseUrl = requireNonBlank(serverBaseUrl, "serverBaseUrl must not be blank.");
         String safePrompt = requireNonBlank(prompt, "prompt must not be blank.");
+        int safeMaxSteps = requirePositive(maxSteps, "maxSteps must be greater than zero.");
 
         // 第一步：创建 session，
         // 让后续本地 runtime 的一次运行从一开始就具备控制面可追踪的会话身份。
@@ -93,7 +101,7 @@ public class RunCommand implements Callable<Integer> {
 
         // 第三步：把 prompt、session 和 trace 发布器一起交给本地 runtime，
         // 这里故意保持主链路直通，不额外插入降级或兜底分支。
-        String finalAnswer = cliRuntimeBootstrap.run(sessionSummary, safePrompt, tracePublisher);
+        String finalAnswer = cliRuntimeBootstrap.run(sessionSummary, safePrompt, tracePublisher, safeMaxSteps);
 
         // 第四步：把 runtime 最终回答直接打印到 CLI 输出，
         // 这样命令行入口就形成了最小可验证闭环。
@@ -126,6 +134,13 @@ public class RunCommand implements Callable<Integer> {
             throw new IllegalArgumentException(message);
         }
         return value.strip();
+    }
+
+    private int requirePositive(int value, String message) {
+        if (value <= 0) {
+            throw new IllegalArgumentException(message);
+        }
+        return value;
     }
 
     @FunctionalInterface

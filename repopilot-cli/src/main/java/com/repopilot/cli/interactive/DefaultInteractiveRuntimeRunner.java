@@ -17,6 +17,7 @@ import com.repopilot.core.skill.ActivatedSkillSet;
 import com.repopilot.core.skill.SkillActivationResult;
 import com.repopilot.core.skill.SkillActivationService;
 import com.repopilot.core.skill.SkillLoader;
+import com.repopilot.core.trace.TracePublisher;
 import com.repopilot.core.tool.ToolRegistry;
 import com.repopilot.core.tool.builtin.BuiltinToolRegistrar;
 import com.repopilot.core.tool.governance.GovernedToolExecutor;
@@ -120,11 +121,13 @@ public final class DefaultInteractiveRuntimeRunner implements InteractiveRuntime
             SessionSummary sessionSummary,
             List<ConversationMessage> history,
             String prompt,
-            AgentLoopObserver observer
+            AgentLoopObserver observer,
+            TracePublisher tracePublisher
     ) {
         Objects.requireNonNull(sessionSummary, "sessionSummary must not be null.");
         Objects.requireNonNull(history, "history must not be null.");
         Objects.requireNonNull(observer, "observer must not be null.");
+        Objects.requireNonNull(tracePublisher, "tracePublisher must not be null.");
         String safePrompt = requireNonBlank(prompt, "prompt must not be blank.");
 
         ToolRegistry toolRegistry = createToolRegistry();
@@ -140,7 +143,7 @@ public final class DefaultInteractiveRuntimeRunner implements InteractiveRuntime
                 new DiffReviewService(workspaceRoot),
                 toolApprovalHandler
         );
-        AgentLoop agentLoop = new AgentLoop(governedToolExecutor, observer);
+        AgentLoop agentLoop = new AgentLoop(governedToolExecutor, observer, tracePublisher);
         AgentLoopResult result = agentLoop.run(new AgentLoopRequest(
                 modelAdapterFactory.create(sessionSummary, toolRegistry.list()),
                 messages,

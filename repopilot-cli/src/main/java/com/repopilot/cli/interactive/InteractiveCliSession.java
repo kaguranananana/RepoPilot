@@ -2,10 +2,14 @@ package com.repopilot.cli.interactive;
 
 import com.repopilot.cli.runtime.CliRuntimeBootstrap;
 import com.repopilot.cli.runtime.LocalEnvironmentMapLoader;
+import com.repopilot.cli.session.DefaultHttpTraceApiClient;
 import com.repopilot.cli.session.DefaultHttpSessionApiClient;
+import com.repopilot.core.trace.TracePublisher;
 import com.repopilot.core.model.ConversationMessage;
 import com.repopilot.protocol.session.CreateSessionRequest;
 import com.repopilot.protocol.session.SessionSummary;
+import com.repopilot.protocol.trace.AppendTraceEventRequest;
+import com.repopilot.protocol.trace.TraceEventRecord;
 import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStreamReader;
@@ -31,6 +35,7 @@ public final class InteractiveCliSession {
     private final InteractiveLineInput lineInput;
     private final PrintWriter outputWriter;
     private final SessionClient sessionClient;
+    private final TraceClient traceClient;
     private final InteractiveCliConfig config;
     private final InteractiveRuntimeRunner runtimeRunner;
     private final ConsoleTraceObserver traceObserver;
@@ -53,12 +58,13 @@ public final class InteractiveCliSession {
                 lineInput,
                 outputWriter,
                 new DefaultHttpSessionApiClient(config.serverBaseUrl())::createSession,
+                new DefaultHttpTraceApiClient(config.serverBaseUrl())::appendTraceEvent,
                 config,
                 new DefaultInteractiveRuntimeRunner(
                         Clock.systemUTC(),
                         new CliRuntimeBootstrap.EnvironmentBackedModelAdapterFactory(environment),
                         workspaceRoot,
-                        8,
+                        config.maxSteps(),
                         new TerminalApprovalHandler(lineInput, outputWriter)
                 ),
                 new ConsoleTraceObserver(outputWriter, config.traceLevel())
@@ -77,6 +83,7 @@ public final class InteractiveCliSession {
                 new InteractiveLineInput(inputReader),
                 outputWriter,
                 sessionClient,
+                TraceClient.noop(),
                 config,
                 runtimeRunner,
                 traceObserver,
@@ -96,6 +103,7 @@ public final class InteractiveCliSession {
                 lineInput,
                 outputWriter,
                 sessionClient,
+                TraceClient.noop(),
                 config,
                 runtimeRunner,
                 traceObserver,
@@ -107,6 +115,28 @@ public final class InteractiveCliSession {
             InteractiveLineInput lineInput,
             PrintWriter outputWriter,
             SessionClient sessionClient,
+            TraceClient traceClient,
+            InteractiveCliConfig config,
+            InteractiveRuntimeRunner runtimeRunner,
+            ConsoleTraceObserver traceObserver
+    ) {
+        this(
+                lineInput,
+                outputWriter,
+                sessionClient,
+                traceClient,
+                config,
+                runtimeRunner,
+                traceObserver,
+                new UserSkillCommandParser()
+        );
+    }
+
+    InteractiveCliSession(
+            InteractiveLineInput lineInput,
+            PrintWriter outputWriter,
+            SessionClient sessionClient,
+            TraceClient traceClient,
             InteractiveCliConfig config,
             InteractiveRuntimeRunner runtimeRunner,
             ConsoleTraceObserver traceObserver,
@@ -115,6 +145,7 @@ public final class InteractiveCliSession {
         this.lineInput = Objects.requireNonNull(lineInput, "lineInput must not be null.");
         this.outputWriter = Objects.requireNonNull(outputWriter, "outputWriter must not be null.");
         this.sessionClient = Objects.requireNonNull(sessionClient, "sessionClient must not be null.");
+        this.traceClient = Objects.requireNonNull(traceClient, "traceClient must not be null.");
         this.config = Objects.requireNonNull(config, "config must not be null.");
         this.runtimeRunner = Objects.requireNonNull(runtimeRunner, "runtimeRunner must not be null.");
         this.traceObserver = Objects.requireNonNull(traceObserver, "traceObserver must not be null.");
@@ -188,7 +219,8 @@ public final class InteractiveCliSession {
                     currentSession,
                     history,
                     input,
-                    traceObserver
+                    traceObserver,
+                    createTracePublisher(currentSession)
             );
             this.history = result.messages();
             traceObserver.onAssistantAnswer(result.finalAnswer());
@@ -214,10 +246,28 @@ public final class InteractiveCliSession {
                 currentSession,
                 history,
                 skillCommand.remainingPrompt(),
-                traceObserver
+                traceObserver,
+                createTracePublisher(currentSession)
         );
         this.history = turnResult.messages();
         traceObserver.onAssistantAnswer(turnResult.finalAnswer());
+    }
+
+    private TracePublisher createTracePublisher(SessionSummary sessionSummary) {
+        Objects.requireNonNull(sessionSummary, "sessionSummary must not be null.");
+
+        return event -> {
+            // 交互式 CLI 的 console trace 和 server trace 共用同一批 AgentLoop 事件，
+            // 这里只负责把 core 事件映射成控制面追加请求，不改变运行时决策。
+            AppendTraceEventRequest request = new AppendTraceEventRequest(
+                    event.type(),
+                    "cli",
+                    event.summary(),
+                    event.occurredAt(),
+                    event.metadata()
+            );
+            traceClient.appendTraceEvent(sessionSummary.sessionId(), request);
+        };
     }
 
     private String readNextInput() {
@@ -236,5 +286,23 @@ public final class InteractiveCliSession {
     interface SessionClient {
 
         SessionSummary createSession(CreateSessionRequest request);
+    }
+
+    @FunctionalInterface
+    interface TraceClient {
+
+        TraceEventRecord appendTraceEvent(String sessionId, AppendTraceEventRequest request);
+
+        static TraceClient noop() {
+            return (sessionId, request) -> new TraceEventRecord(
+                    "trace-noop",
+                    sessionId,
+                    request.type(),
+                    request.source(),
+                    request.summary(),
+                    request.occurredAt(),
+                    request.metadata()
+            );
+        }
     }
 }

@@ -1,5 +1,6 @@
 package com.repopilot.cli;
 
+import com.repopilot.cli.command.EvalCommand;
 import com.repopilot.cli.command.RunCommand;
 import com.repopilot.cli.interactive.InteractiveCliSession;
 import java.util.Objects;
@@ -15,6 +16,7 @@ import picocli.CommandLine.Command;
         mixinStandardHelpOptions = true,
         description = "RepoPilot 智能编码代理平台的命令行入口。",
         subcommands = {
+                EvalCommand.class,
                 RunCommand.class
         }
 )

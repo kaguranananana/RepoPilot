@@ -2,6 +2,7 @@ package com.repopilot.cli.interactive;
 
 import com.repopilot.core.agent.AgentLoopObserver;
 import com.repopilot.core.model.ConversationMessage;
+import com.repopilot.core.trace.TracePublisher;
 import com.repopilot.protocol.session.SessionSummary;
 import java.util.List;
 
@@ -24,6 +25,7 @@ public interface InteractiveRuntimeRunner {
             SessionSummary sessionSummary,
             List<ConversationMessage> history,
             String prompt,
-            AgentLoopObserver observer
+            AgentLoopObserver observer,
+            TracePublisher tracePublisher
     );
 }

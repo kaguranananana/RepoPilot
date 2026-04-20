@@ -36,7 +36,13 @@ import java.util.Objects;
 @FunctionalInterface
 public interface CliRuntimeBootstrap {
 
-    String run(SessionSummary sessionSummary, String prompt, TracePublisher tracePublisher);
+    int DEFAULT_MAX_STEPS = 12;
+
+    String run(SessionSummary sessionSummary, String prompt, TracePublisher tracePublisher, int maxSteps);
+
+    default String run(SessionSummary sessionSummary, String prompt, TracePublisher tracePublisher) {
+        return run(sessionSummary, prompt, tracePublisher, DEFAULT_MAX_STEPS);
+    }
 
     default String run(SessionSummary sessionSummary, String prompt) {
         return run(sessionSummary, prompt, TracePublisher.noop());
@@ -96,10 +102,18 @@ public interface CliRuntimeBootstrap {
         }
 
         @Override
-        public String run(SessionSummary sessionSummary, String prompt, TracePublisher tracePublisher) {
+        public String run(
+                SessionSummary sessionSummary,
+                String prompt,
+                TracePublisher tracePublisher,
+                int maxSteps
+        ) {
             Objects.requireNonNull(sessionSummary, "sessionSummary must not be null.");
             Objects.requireNonNull(tracePublisher, "tracePublisher must not be null.");
             String safePrompt = requireNonBlank(prompt, "prompt must not be blank.");
+            if (maxSteps <= 0) {
+                throw new IllegalArgumentException("maxSteps must be greater than zero.");
+            }
             Path workspaceRoot = Path.of("").toAbsolutePath().normalize();
 
             // 先建立本轮可见的最小工具集合。
@@ -116,7 +130,7 @@ public interface CliRuntimeBootstrap {
             // 再把稳定基础指令、会话指令和运行时 metadata 分块组装，
             // 避免把 sessionId、时间等高频信息直接混进稳定 system prompt 前缀。
             SystemPromptBoundary promptBoundary = systemPromptBuilder.build(
-                    buildDynamicPromptContext(sessionSummary, toolRegistry)
+                    buildDynamicPromptContext(sessionSummary, toolRegistry, maxSteps)
             );
 
             // 最后把拼好的消息列表送进 AgentLoop，
@@ -125,7 +139,7 @@ public interface CliRuntimeBootstrap {
             AgentLoopResult result = agentLoop.run(new AgentLoopRequest(
                     modelAdapterFactory.create(sessionSummary, toolRegistry.list()),
                     buildMessages(promptBoundary, safePrompt),
-                    8
+                    maxSteps
             ));
 
             return result.finalAnswer();
@@ -133,7 +147,8 @@ public interface CliRuntimeBootstrap {
 
         private DynamicPromptContext buildDynamicPromptContext(
                 SessionSummary sessionSummary,
-                ToolRegistry toolRegistry
+                ToolRegistry toolRegistry,
+                int maxSteps
         ) {
             return new DynamicPromptContext(
                     // 这一段描述当前会话身份，
@@ -147,10 +162,9 @@ public interface CliRuntimeBootstrap {
                     // 保持与会话前导、预算提示等动态信息分离。
                     "workspaceId=%s".formatted(sessionSummary.workspaceId()),
                     skillLoader.loadIndex().summaries(),
-                    // 当前入口先把预算固定为 8 步，
-                    // 既能覆盖一轮真实 tool-calling，
-                    // 又不会把最小演示回合无限放大。
-                    "maxSteps=8",
+                    // maxSteps 来自 CLI 显式预算，
+                    // 让真实模型 E2E 可以按任务复杂度提高上限，同时仍保留硬停止边界。
+                    "maxSteps=%d".formatted(maxSteps),
                     toolRegistry.list(),
                     Map.of(
                             "sessionId", sessionSummary.sessionId(),

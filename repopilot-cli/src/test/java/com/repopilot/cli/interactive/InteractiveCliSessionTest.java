@@ -13,10 +13,14 @@ import com.repopilot.core.model.ModelAdapter;
 import com.repopilot.core.model.ModelResponse;
 import com.repopilot.core.model.ToolCall;
 import com.repopilot.core.model.ToolCallModelResponse;
+import com.repopilot.core.trace.TracePublisher;
 import com.repopilot.core.tool.ToolDefinition;
 import com.repopilot.protocol.session.CreateSessionRequest;
 import com.repopilot.protocol.session.SessionStatus;
 import com.repopilot.protocol.session.SessionSummary;
+import com.repopilot.protocol.trace.AppendTraceEventRequest;
+import com.repopilot.protocol.trace.TraceEventRecord;
+import com.repopilot.protocol.trace.TraceEventType;
 import java.io.BufferedReader;
 import java.io.ByteArrayOutputStream;
 import java.io.PrintWriter;
@@ -63,6 +67,33 @@ class InteractiveCliSessionTest {
         assertEquals("workspace-001", sessionApiClient.requests.get(0).workspaceId());
         assertTrue(outputStream.toString(StandardCharsets.UTF_8).contains("[session] created session-001 workspace=workspace-001"));
         assertTrue(outputStream.toString(StandardCharsets.UTF_8).contains("[assistant] 分析完成: 分析 README.md"));
+    }
+
+    @Test
+    void shouldForwardInteractiveRuntimeTraceToControlPlane() {
+        RecordingSessionApiClient sessionApiClient = new RecordingSessionApiClient(List.of(
+                session("session-001", "workspace-001")
+        ));
+        RecordingTraceApiClient traceApiClient = new RecordingTraceApiClient();
+        RecordingRuntimeRunner runtimeRunner = new RecordingRuntimeRunner();
+        ByteArrayOutputStream outputStream = new ByteArrayOutputStream();
+        PrintWriter outputWriter = new PrintWriter(outputStream, true, StandardCharsets.UTF_8);
+
+        InteractiveCliSession session = new InteractiveCliSession(
+                new InteractiveLineInput(new BufferedReader(new StringReader("分析 README.md\n/exit\n"))),
+                outputWriter,
+                sessionApiClient,
+                traceApiClient,
+                new InteractiveCliConfig("http://127.0.0.1:8080", "workspace-001"),
+                runtimeRunner,
+                new ConsoleTraceObserver(outputWriter)
+        );
+
+        session.start();
+
+        assertEquals(List.of("session-001"), traceApiClient.sessionIds);
+        assertEquals(TraceEventType.MODEL_CALL_REQUESTED, traceApiClient.requests.get(0).type());
+        assertEquals("cli", traceApiClient.requests.get(0).source());
     }
 
     @Test
@@ -303,6 +334,27 @@ class InteractiveCliSessionTest {
         }
     }
 
+    private static final class RecordingTraceApiClient implements InteractiveCliSession.TraceClient {
+
+        private final List<String> sessionIds = new ArrayList<>();
+        private final List<AppendTraceEventRequest> requests = new ArrayList<>();
+
+        @Override
+        public TraceEventRecord appendTraceEvent(String sessionId, AppendTraceEventRequest request) {
+            sessionIds.add(sessionId);
+            requests.add(request);
+            return new TraceEventRecord(
+                    "trace-001",
+                    sessionId,
+                    request.type(),
+                    request.source(),
+                    request.summary(),
+                    request.occurredAt(),
+                    request.metadata()
+            );
+        }
+    }
+
     private static final class RecordingRuntimeRunner implements InteractiveRuntimeRunner {
 
         private final AtomicInteger createInitialHistoryCount = new AtomicInteger();
@@ -324,8 +376,15 @@ class InteractiveCliSessionTest {
                 SessionSummary sessionSummary,
                 List<ConversationMessage> history,
                 String prompt,
-                AgentLoopObserver observer
+                AgentLoopObserver observer,
+                TracePublisher tracePublisher
         ) {
+            tracePublisher.publish(new TracePublisher.TraceEvent(
+                    TraceEventType.MODEL_CALL_REQUESTED,
+                    "测试 trace",
+                    Instant.parse("2026-04-16T14:00:01Z"),
+                    Map.of("stepNumber", "1")
+            ));
             recordedHistories.add(List.copyOf(history));
             prompts.add(prompt);
             int invocation = runTurnCount.incrementAndGet();

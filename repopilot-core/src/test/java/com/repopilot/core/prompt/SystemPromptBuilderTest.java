@@ -95,6 +95,11 @@ class SystemPromptBuilderTest {
         assertTrue(boundary.baseInstructions().contains("@@"));
         assertTrue(boundary.baseInstructions().contains("-旧行"));
         assertTrue(boundary.baseInstructions().contains("+新行"));
+        assertTrue(boundary.baseInstructions().contains("如果用户已经给出明确的相对文件路径"));
+        assertTrue(boundary.baseInstructions().contains("必须优先直接 read_file"));
+        assertTrue(boundary.baseInstructions().contains("不得先搜索文件名"));
+        assertTrue(boundary.baseInstructions().contains("替换已有行时"));
+        assertTrue(boundary.baseInstructions().contains("同时包含删除行和新增行"));
     }
 
     @Test

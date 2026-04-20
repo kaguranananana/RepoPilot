@@ -11,6 +11,7 @@ import com.repopilot.core.model.MessageRole;
 import com.repopilot.core.model.ModelAdapter;
 import com.repopilot.core.model.ModelResponse;
 import com.repopilot.core.approval.ToolApprovalHandler;
+import com.repopilot.core.trace.TracePublisher;
 import com.repopilot.core.tool.ToolDefinition;
 import com.repopilot.core.skill.SkillLoader;
 import com.repopilot.protocol.session.SessionStatus;
@@ -62,13 +63,15 @@ class InteractiveRuntimeRunnerTest {
                 session(),
                 initialHistory,
                 "第一问",
-                AgentLoopObserver.noop()
+                AgentLoopObserver.noop(),
+                TracePublisher.noop()
         );
         InteractiveTurnResult secondTurn = runtimeRunner.runTurn(
                 session(),
                 firstTurn.messages(),
                 "第二问",
-                AgentLoopObserver.noop()
+                AgentLoopObserver.noop(),
+                TracePublisher.noop()
         );
 
         assertEquals("回答: 第一问", firstTurn.finalAnswer());

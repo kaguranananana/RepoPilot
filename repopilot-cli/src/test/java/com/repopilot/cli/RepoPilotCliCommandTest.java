@@ -1,6 +1,7 @@
 package com.repopilot.cli;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.Test;
@@ -17,5 +18,12 @@ class RepoPilotCliCommandTest {
 
         assertEquals(0, exitCode);
         assertEquals(1, startCount.get());
+    }
+
+    @Test
+    void shouldRegisterEvalSubcommandOnRootCommand() {
+        CommandLine commandLine = new CommandLine(new RepoPilotCliCommand());
+
+        assertTrue(commandLine.getSubcommands().containsKey("eval"));
     }
 }

@@ -1,0 +1,406 @@
+package com.repopilot.cli.eval;
+
+import com.repopilot.core.agent.AgentLoopResult;
+import com.repopilot.core.context.ContextCompactionPolicy;
+import com.repopilot.core.model.FinalModelResponse;
+import com.repopilot.core.model.ModelAdapter;
+import com.repopilot.core.model.ModelResponse;
+import com.repopilot.core.model.ToolCall;
+import com.repopilot.core.model.ToolCallModelResponse;
+import com.repopilot.core.trace.TracePublisher;
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+import java.util.regex.Pattern;
+
+/**
+ * 固定评估任务定义。
+ * 场景只描述输入、夹具、脚本模型和验收条件，
+ * 真正执行仍交给 EvalRunner 走统一 runtime 主链路。
+ */
+public record EvalScenario(
+        String id,
+        String title,
+        RuntimeKind runtimeKind,
+        String prompt,
+        int maxSteps,
+        ContextCompactionPolicy contextCompactionPolicy,
+        WorkspaceInitializer workspaceInitializer,
+        ModelAdapterFactory modelAdapterFactory,
+        ScenarioVerifier scenarioVerifier
+) {
+
+    private static final Pattern SCENARIO_ID_PATTERN = Pattern.compile("[a-z0-9][a-z0-9-]*");
+
+    public EvalScenario {
+        id = requireScenarioId(id);
+        title = requireNonBlank(title, "title must not be blank.");
+        runtimeKind = Objects.requireNonNull(runtimeKind, "runtimeKind must not be null.");
+        prompt = requireNonBlank(prompt, "prompt must not be blank.");
+        if (maxSteps <= 0) {
+            throw new IllegalArgumentException("maxSteps must be greater than zero.");
+        }
+        contextCompactionPolicy =
+                Objects.requireNonNull(contextCompactionPolicy, "contextCompactionPolicy must not be null.");
+        workspaceInitializer =
+                Objects.requireNonNull(workspaceInitializer, "workspaceInitializer must not be null.");
+        modelAdapterFactory = Objects.requireNonNull(modelAdapterFactory, "modelAdapterFactory must not be null.");
+        scenarioVerifier = Objects.requireNonNull(scenarioVerifier, "scenarioVerifier must not be null.");
+    }
+
+    public static EvalScenario scripted(
+            String id,
+            String title,
+            String prompt,
+            int maxSteps,
+            WorkspaceInitializer workspaceInitializer,
+            List<ModelResponse> scriptedResponses,
+            ScenarioVerifier scenarioVerifier
+    ) {
+        return scripted(
+                id,
+                title,
+                prompt,
+                maxSteps,
+                ContextCompactionPolicy.defaultPolicy(),
+                workspaceInitializer,
+                scriptedResponses,
+                scenarioVerifier
+        );
+    }
+
+    public static EvalScenario scripted(
+            String id,
+            String title,
+            String prompt,
+            int maxSteps,
+            ContextCompactionPolicy contextCompactionPolicy,
+            WorkspaceInitializer workspaceInitializer,
+            List<ModelResponse> scriptedResponses,
+            ScenarioVerifier scenarioVerifier
+    ) {
+        List<ModelResponse> safeScriptedResponses = List.copyOf(
+                Objects.requireNonNull(scriptedResponses, "scriptedResponses must not be null.")
+        );
+        if (safeScriptedResponses.isEmpty()) {
+            throw new IllegalArgumentException("scriptedResponses must not be empty.");
+        }
+
+        return new EvalScenario(
+                id,
+                title,
+                RuntimeKind.SCRIPTED_RUNTIME,
+                prompt,
+                maxSteps,
+                contextCompactionPolicy,
+                workspaceInitializer,
+                workspaceRoot -> new ScriptedModelAdapter(safeScriptedResponses),
+                scenarioVerifier
+        );
+    }
+
+    public static List<EvalScenario> defaultScriptedScenarios() {
+        return List.of(
+                codeSearchScenario(),
+                fileReadScenario(),
+                patchEditScenario(),
+                commandValidationScenario(),
+                skillActivationScenario(),
+                readFailureExposureScenario(),
+                contextCompactionScenario(),
+                writeFileScenario(),
+                multiToolScenario(),
+                commandFailureExposureScenario()
+        );
+    }
+
+    private static EvalScenario codeSearchScenario() {
+        return scripted(
+                "code-search",
+                "代码搜索",
+                "搜索 draft 状态配置",
+                4,
+                workspace -> writeFile(workspace, "src/Demo.txt", "name=RepoPilot\nstatus=draft\n"),
+                List.of(
+                        tool("call-search", "grep_files", Map.of("pattern", "status=draft", "path", "src")),
+                        new FinalModelResponse("搜索完成")
+                ),
+                execution -> requireToolMessage(execution, "[grep_files]")
+        );
+    }
+
+    private static EvalScenario fileReadScenario() {
+        return scripted(
+                "file-read",
+                "文件读取",
+                "读取 README",
+                4,
+                workspace -> writeFile(workspace, "README.md", "# RepoPilot\n"),
+                List.of(
+                        tool("call-read", "read_file", Map.of("path", "README.md")),
+                        new FinalModelResponse("读取完成")
+                ),
+                execution -> requireToolMessage(execution, "# RepoPilot")
+        );
+    }
+
+    private static EvalScenario patchEditScenario() {
+        return scripted(
+                "patch-edit",
+                "补丁修改",
+                "把状态改成 ready",
+                5,
+                workspace -> writeFile(workspace, "src/Demo.txt", "name=RepoPilot\nstatus=draft\n"),
+                List.of(
+                        tool("call-patch", "apply_patch", Map.of(
+                                "path", "src/Demo.txt",
+                                "patch", """
+                                        @@
+                                         name=RepoPilot
+                                        -status=draft
+                                        +status=ready
+                                        """
+                        )),
+                        new FinalModelResponse("补丁完成")
+                ),
+                execution -> requireFileContent(execution.workspaceRoot(), "src/Demo.txt", "name=RepoPilot\nstatus=ready\n")
+        );
+    }
+
+    private static EvalScenario commandValidationScenario() {
+        return scripted(
+                "command-validation",
+                "命令验证",
+                "用命令验证 ready 状态",
+                4,
+                workspace -> writeFile(workspace, "src/Demo.txt", "status=ready\n"),
+                List.of(
+                        tool("call-command", "run_command", Map.of("command", "grep -n 'status=ready' src/Demo.txt")),
+                        new FinalModelResponse("命令验证完成")
+                ),
+                execution -> requireToolMessage(execution, "exitCode: 0")
+        );
+    }
+
+    private static EvalScenario skillActivationScenario() {
+        return scripted(
+                "skill-activation",
+                "Skill 激活",
+                "激活 eval-skill",
+                4,
+                workspace -> writeFile(
+                        workspace,
+                        ".repopilot/skills/eval-skill/SKILL.md",
+                        """
+                                ---
+                                name: eval-skill
+                                description: 评估用 Skill
+                                ---
+                                # Eval Skill
+                                """
+                ),
+                List.of(
+                        tool("call-skill", "activate_skill", Map.of("name", "eval-skill")),
+                        new FinalModelResponse("Skill 激活完成")
+                ),
+                execution -> requireToolMessage(execution, "eval-skill")
+        );
+    }
+
+    private static EvalScenario readFailureExposureScenario() {
+        return scripted(
+                "read-failure-exposure",
+                "工具失败暴露",
+                "读取不存在文件并暴露错误",
+                4,
+                workspace -> {
+                },
+                List.of(
+                        tool("call-missing-read", "read_file", Map.of("path", "missing.txt")),
+                        new FinalModelResponse("文件不存在错误已暴露")
+                ),
+                execution -> requireToolMessage(execution, "文件不存在: missing.txt")
+        );
+    }
+
+    private static EvalScenario contextCompactionScenario() {
+        return scripted(
+                "context-compaction",
+                "上下文压缩",
+                "连续读取文件直到触发上下文压缩",
+                8,
+                new ContextCompactionPolicy(4, 2, 2),
+                workspace -> writeFile(workspace, "notes/a.txt", "A\n"),
+                List.of(
+                        tool("call-read-1", "read_file", Map.of("path", "notes/a.txt")),
+                        tool("call-read-2", "read_file", Map.of("path", "notes/a.txt")),
+                        tool("call-read-3", "read_file", Map.of("path", "notes/a.txt")),
+                        new FinalModelResponse("压缩链路完成")
+                ),
+                execution -> {
+                    boolean compacted = execution.traceEvents().stream()
+                            .anyMatch(event -> event.type().name().equals("CONTEXT_COMPACTION_COMPLETED"));
+                    if (!compacted) {
+                        throw new IllegalStateException("未观察到上下文压缩完成 trace。");
+                    }
+                }
+        );
+    }
+
+    private static EvalScenario writeFileScenario() {
+        return scripted(
+                "write-file",
+                "整文件写入",
+                "创建新文件",
+                4,
+                workspace -> {
+                },
+                List.of(
+                        tool("call-write", "write_file", Map.of(
+                                "path", "docs/output.md",
+                                "content", "# 输出\nstatus=ready\n"
+                        )),
+                        new FinalModelResponse("写入完成")
+                ),
+                execution -> requireFileContent(execution.workspaceRoot(), "docs/output.md", "# 输出\nstatus=ready\n")
+        );
+    }
+
+    private static EvalScenario multiToolScenario() {
+        return scripted(
+                "multi-tool-round",
+                "单轮多工具",
+                "同一轮搜索并读取文件",
+                4,
+                workspace -> writeFile(workspace, "src/App.java", "class App {}\n"),
+                List.of(
+                        new ToolCallModelResponse(List.of(
+                                new ToolCall("call-multi-1", "grep_files", Map.of("pattern", "class App", "path", "src")),
+                                new ToolCall("call-multi-2", "read_file", Map.of("path", "src/App.java"))
+                        )),
+                        new FinalModelResponse("单轮多工具完成")
+                ),
+                execution -> {
+                    requireToolMessage(execution, "[grep_files]");
+                    requireToolMessage(execution, "class App {}");
+                }
+        );
+    }
+
+    private static EvalScenario commandFailureExposureScenario() {
+        return scripted(
+                "command-failure-exposure",
+                "命令失败暴露",
+                "运行失败命令并暴露退出码",
+                4,
+                workspace -> {
+                },
+                List.of(
+                        tool("call-failing-command", "run_command", Map.of("command", "test -f missing.txt")),
+                        new FinalModelResponse("命令失败已暴露")
+                ),
+                execution -> requireToolMessage(execution, "exitCode: 1")
+        );
+    }
+
+    private static ToolCallModelResponse tool(String id, String toolName, Map<String, String> arguments) {
+        return new ToolCallModelResponse(List.of(new ToolCall(id, toolName, arguments)));
+    }
+
+    private static void writeFile(Path workspaceRoot, String relativePath, String content) throws IOException {
+        Path targetFile = workspaceRoot.resolve(relativePath);
+        Files.createDirectories(targetFile.getParent());
+        Files.writeString(targetFile, content);
+    }
+
+    private static void requireFileContent(Path workspaceRoot, String relativePath, String expectedContent)
+            throws IOException {
+        String actualContent = Files.readString(workspaceRoot.resolve(relativePath));
+        if (!actualContent.equals(expectedContent)) {
+            throw new IllegalStateException("文件内容不符合预期: " + relativePath);
+        }
+    }
+
+    private static void requireToolMessage(ScenarioExecution execution, String expectedText) {
+        boolean found = execution.agentLoopResult().messages().stream()
+                .anyMatch(message -> message.content().contains(expectedText));
+        if (!found) {
+            throw new IllegalStateException("未在工具消息中找到: " + expectedText);
+        }
+    }
+
+    private static String requireScenarioId(String value) {
+        String safeValue = requireNonBlank(value, "id must not be blank.");
+        if (!SCENARIO_ID_PATTERN.matcher(safeValue).matches()) {
+            throw new IllegalArgumentException("id must match [a-z0-9][a-z0-9-]*.");
+        }
+        return safeValue;
+    }
+
+    private static String requireNonBlank(String value, String message) {
+        if (value == null || value.isBlank()) {
+            throw new IllegalArgumentException(message);
+        }
+        return value.strip();
+    }
+
+    public enum RuntimeKind {
+        SCRIPTED_RUNTIME,
+        REAL_MODEL_PROVIDER
+    }
+
+    @FunctionalInterface
+    public interface WorkspaceInitializer {
+
+        void initialize(Path workspaceRoot) throws Exception;
+    }
+
+    @FunctionalInterface
+    public interface ModelAdapterFactory {
+
+        ModelAdapter create(Path workspaceRoot) throws Exception;
+    }
+
+    @FunctionalInterface
+    public interface ScenarioVerifier {
+
+        void verify(ScenarioExecution execution) throws Exception;
+    }
+
+    public record ScenarioExecution(
+            Path workspaceRoot,
+            AgentLoopResult agentLoopResult,
+            List<TracePublisher.TraceEvent> traceEvents
+    ) {
+
+        public ScenarioExecution {
+            workspaceRoot = Objects.requireNonNull(workspaceRoot, "workspaceRoot must not be null.");
+            agentLoopResult = Objects.requireNonNull(agentLoopResult, "agentLoopResult must not be null.");
+            traceEvents = List.copyOf(Objects.requireNonNull(traceEvents, "traceEvents must not be null."));
+        }
+    }
+
+    private static final class ScriptedModelAdapter implements ModelAdapter {
+
+        private final List<ModelResponse> scriptedResponses;
+        private int cursor;
+
+        private ScriptedModelAdapter(List<ModelResponse> scriptedResponses) {
+            this.scriptedResponses = scriptedResponses;
+        }
+
+        @Override
+        public ModelResponse next(List<com.repopilot.core.model.ConversationMessage> messages) {
+            if (cursor >= scriptedResponses.size()) {
+                throw new IllegalStateException("脚本模型响应已耗尽。");
+            }
+
+            ModelResponse response = scriptedResponses.get(cursor);
+            cursor += 1;
+            return response;
+        }
+    }
+}
