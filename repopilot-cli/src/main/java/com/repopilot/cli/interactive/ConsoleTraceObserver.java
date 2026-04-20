@@ -66,8 +66,19 @@ public final class ConsoleTraceObserver implements AgentLoopObserver {
         outputWriter.flush();
     }
 
+    public void onInteractionModeChanged(InteractionMode interactionMode) {
+        outputWriter.printf(
+                "[mode] %s %s%n",
+                interactionMode.label(),
+                interactionMode.description()
+        );
+        outputWriter.flush();
+    }
+
     public void printHelp() {
         outputWriter.println("/help  查看交互命令说明");
+        outputWriter.println("/plan [任务] 进入只读计划模式；带任务时立即执行只读分析");
+        outputWriter.println("/execute [任务] 进入执行模式；带任务时立即执行修改或验证");
         outputWriter.println("/reset 重置当前会话并重新创建 session");
         outputWriter.println("/exit  退出交互模式");
         outputWriter.flush();

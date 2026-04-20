@@ -28,4 +28,16 @@ public interface InteractiveRuntimeRunner {
             AgentLoopObserver observer,
             TracePublisher tracePublisher
     );
+
+    default InteractiveTurnResult runTurn(
+            SessionSummary sessionSummary,
+            List<ConversationMessage> history,
+            String prompt,
+            AgentLoopObserver observer,
+            TracePublisher tracePublisher,
+            InteractionMode interactionMode
+    ) {
+        // 默认方法保持旧实现可用；真正支持模式的 runner 会覆盖这个入口。
+        return runTurn(sessionSummary, history, prompt, observer, tracePublisher);
+    }
 }

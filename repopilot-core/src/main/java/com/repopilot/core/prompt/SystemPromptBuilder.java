@@ -1,5 +1,6 @@
 package com.repopilot.core.prompt;
 
+import com.repopilot.core.agent.AgentRunMode;
 import com.repopilot.core.skill.SkillSummary;
 import com.repopilot.core.tool.ToolDefinition;
 import java.util.ArrayList;
@@ -48,7 +49,7 @@ public class SystemPromptBuilder {
         return new SystemPromptBoundary(
                 BASE_INSTRUCTIONS,
                 buildSessionInstructions(dynamicPromptContext),
-                buildRuntimeContextBlock(dynamicPromptContext.runtimeMetadata())
+                buildRuntimeContextBlock(dynamicPromptContext)
         );
     }
 
@@ -59,6 +60,7 @@ public class SystemPromptBuilder {
         appendTextSection(sections, "## 工作区信息", dynamicPromptContext.workspaceContext());
         appendSkillSummarySection(sections, dynamicPromptContext.skillSummaries());
         appendTextSection(sections, "## 预算提示", dynamicPromptContext.budgetHint());
+        appendRunModeSection(sections, dynamicPromptContext.runMode());
         appendToolSection(sections, dynamicPromptContext.availableTools());
 
         if (sections.isEmpty()) {
@@ -69,9 +71,11 @@ public class SystemPromptBuilder {
                 + String.join(System.lineSeparator() + System.lineSeparator(), sections);
     }
 
-    private String buildRuntimeContextBlock(Map<String, String> runtimeMetadata) {
+    private String buildRuntimeContextBlock(DynamicPromptContext dynamicPromptContext) {
+        Map<String, String> runtimeMetadata = dynamicPromptContext.runtimeMetadata();
         if (runtimeMetadata.isEmpty()) {
-            return "";
+            return "# 运行时上下文" + System.lineSeparator()
+                    + "- runMode: " + dynamicPromptContext.runMode();
         }
 
         StringBuilder builder = new StringBuilder("# 运行时上下文");
@@ -84,6 +88,9 @@ public class SystemPromptBuilder {
                     .append(": ")
                     .append(entry.getValue());
         }
+        builder.append(System.lineSeparator())
+                .append("- runMode: ")
+                .append(dynamicPromptContext.runMode());
         return builder.toString();
     }
 
@@ -108,6 +115,25 @@ public class SystemPromptBuilder {
                     .append(skillSummary.toPromptLine());
         }
         sections.add(builder.toString());
+    }
+
+    private void appendRunModeSection(List<String> sections, AgentRunMode runMode) {
+        String modeInstructions = switch (runMode) {
+            case PLAN -> """
+                    ## 运行模式
+                    PLAN
+                    - 当前处于只读计划阶段，只能调用 read_file 和 grep_files。
+                    - 不得请求 apply_patch、write_file 或 run_command。
+                    - 最终回答必须输出实施计划和证据摘要，不得声称已经修改工作区。
+                    """.strip();
+            case EXECUTE -> """
+                    ## 运行模式
+                    EXECUTE
+                    - 当前处于执行阶段，可以在权限治理、diff review 和审批边界内完成修改与验证。
+                    - 仍然必须先取证，再做最小补丁，再运行必要验证。
+                    """.strip();
+        };
+        sections.add(modeInstructions);
     }
 
     private void appendToolSection(List<String> sections, List<ToolDefinition> availableTools) {

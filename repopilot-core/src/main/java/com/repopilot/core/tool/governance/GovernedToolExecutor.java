@@ -110,6 +110,11 @@ public final class GovernedToolExecutor {
             return preHookFailure;
         }
 
+        ToolExecutionResult runModeFailure = validateRunModeAllowedTools(executionContext, toolDefinition);
+        if (runModeFailure != null) {
+            return runModeFailure;
+        }
+
         ToolExecutionResult allowedToolsFailure = validateActivatedSkillAllowedTools(executionContext, toolDefinition);
         if (allowedToolsFailure != null) {
             return allowedToolsFailure;
@@ -154,6 +159,25 @@ public final class GovernedToolExecutor {
         } catch (RuntimeException exception) {
             return ToolExecutionResult.fatalError("工具执行异常: " + exception.getMessage());
         }
+    }
+
+    private ToolExecutionResult validateRunModeAllowedTools(
+            ToolExecutionContext executionContext,
+            ToolDefinition toolDefinition
+    ) {
+        // 运行模式约束先于权限审批执行，
+        // 因此 PLAN 阶段的写入型工具不会进入 diff review 或人工审批。
+        if (executionContext.runMode().allowsTool(toolDefinition.name())) {
+            return null;
+        }
+
+        return ToolExecutionResult.recoverableError(
+                "当前运行模式 %s 是只读阶段，不允许执行工具: %s。允许工具: %s".formatted(
+                        executionContext.runMode(),
+                        toolDefinition.name(),
+                        executionContext.runMode().allowedToolSummary()
+                )
+        );
     }
 
     private ToolExecutionResult validateRequiredArguments(ToolDefinition toolDefinition, Map<String, String> arguments) {

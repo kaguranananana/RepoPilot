@@ -183,6 +183,35 @@ class InteractiveRuntimeRunnerTest {
         assertFalse(modelAdapterFactory.recordedCalls.get(0).get(0).content().contains("run_command: 在工作区目录内执行单条 shell 命令"));
     }
 
+    @Test
+    void shouldExposeOnlyReadOnlyToolsDuringPlanMode() {
+        RecordingModelAdapterFactory modelAdapterFactory = new RecordingModelAdapterFactory();
+        DefaultInteractiveRuntimeRunner runtimeRunner = new DefaultInteractiveRuntimeRunner(
+                Clock.fixed(Instant.parse("2026-04-16T07:00:00Z"), ZoneOffset.UTC),
+                modelAdapterFactory,
+                8
+        );
+
+        InteractiveTurnResult result = runtimeRunner.runTurn(
+                session(),
+                runtimeRunner.createInitialHistory(session()),
+                "先分析修改方案",
+                AgentLoopObserver.noop(),
+                TracePublisher.noop(),
+                InteractionMode.PLAN
+        );
+
+        assertEquals("回答: 先分析修改方案", result.finalAnswer());
+        assertEquals(List.of("read_file", "grep_files"), modelAdapterFactory.recordedAvailableTools.get(0));
+        String systemPrompt = modelAdapterFactory.recordedCalls.get(0).get(0).content();
+        String availableToolSection = systemPrompt.substring(systemPrompt.indexOf("## 可用工具子集"));
+        assertTrue(systemPrompt.contains("## 运行模式"));
+        assertTrue(systemPrompt.contains("PLAN"));
+        assertTrue(availableToolSection.contains("read_file: 读取单个 UTF-8 文本文件内容"));
+        assertFalse(availableToolSection.contains("apply_patch:"));
+        assertFalse(availableToolSection.contains("run_command:"));
+    }
+
     private static SessionSummary session() {
         return new SessionSummary(
                 "session-001",

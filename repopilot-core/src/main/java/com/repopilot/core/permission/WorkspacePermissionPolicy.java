@@ -2,6 +2,7 @@ package com.repopilot.core.permission;
 
 import com.repopilot.core.tool.ToolDefinition;
 import java.nio.file.Path;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
@@ -15,10 +16,11 @@ import java.util.Set;
  */
 public final class WorkspacePermissionPolicy implements PermissionPolicy {
 
-    private static final Set<String> READ_ONLY_TOOLS = Set.of(
+    private static final List<String> READ_ONLY_TOOL_NAMES = List.of(
             "read_file",
             "grep_files"
     );
+    private static final Set<String> READ_ONLY_TOOLS = Set.copyOf(READ_ONLY_TOOL_NAMES);
     private static final Set<String> CONTEXT_TOOLS = Set.of(
             "activate_skill"
     );
@@ -34,6 +36,15 @@ public final class WorkspacePermissionPolicy implements PermissionPolicy {
         this.workspaceRoot = Objects.requireNonNull(workspaceRoot, "workspaceRoot must not be null.")
                 .toAbsolutePath()
                 .normalize();
+    }
+
+    public static boolean isReadOnlyToolName(String toolName) {
+        Objects.requireNonNull(toolName, "toolName must not be null.");
+        return READ_ONLY_TOOLS.contains(toolName);
+    }
+
+    public static List<String> readOnlyToolNames() {
+        return READ_ONLY_TOOL_NAMES;
     }
 
     @Override
@@ -57,7 +68,7 @@ public final class WorkspacePermissionPolicy implements PermissionPolicy {
 
         // 一期只显式放行工作区内的只读工具，
         // 保证主链路先把最安全、最确定的能力跑通。
-        if (READ_ONLY_TOOLS.contains(toolDefinition.name())) {
+        if (isReadOnlyToolName(toolDefinition.name())) {
             return PermissionDecision.allow("工具只读且作用域位于当前工作区内。");
         }
 

@@ -156,7 +156,7 @@ public class AgentLoop {
                     workingMemory.recordToolCall(toolCall);
                     ToolExecutionResult executionResult =
                             governedToolExecutor.execute(
-                                    new ToolExecutionContext(List.copyOf(messages)),
+                                    new ToolExecutionContext(List.copyOf(messages), request.runMode()),
                                     toolCall.toolName(),
                                     toolCall.arguments()
                             );

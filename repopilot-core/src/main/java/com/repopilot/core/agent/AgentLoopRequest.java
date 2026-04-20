@@ -12,6 +12,7 @@ public record AgentLoopRequest(
         ModelAdapter modelAdapter,
         List<ConversationMessage> messages,
         int maxSteps,
+        AgentRunMode runMode,
         int toolCallLoopRepeatThreshold
 ) {
 
@@ -20,11 +21,31 @@ public record AgentLoopRequest(
 
     public AgentLoopRequest(ModelAdapter modelAdapter, List<ConversationMessage> messages, int maxSteps) {
         // 旧构造入口沿用默认阈值，保持调用方必须显式传入 model/messages/maxSteps 的主语义不变。
-        this(modelAdapter, messages, maxSteps, DEFAULT_TOOL_CALL_LOOP_REPEAT_THRESHOLD);
+        this(modelAdapter, messages, maxSteps, AgentRunMode.EXECUTE, DEFAULT_TOOL_CALL_LOOP_REPEAT_THRESHOLD);
+    }
+
+    public AgentLoopRequest(
+            ModelAdapter modelAdapter,
+            List<ConversationMessage> messages,
+            int maxSteps,
+            AgentRunMode runMode
+    ) {
+        this(modelAdapter, messages, maxSteps, runMode, DEFAULT_TOOL_CALL_LOOP_REPEAT_THRESHOLD);
+    }
+
+    public AgentLoopRequest(
+            ModelAdapter modelAdapter,
+            List<ConversationMessage> messages,
+            int maxSteps,
+            int toolCallLoopRepeatThreshold
+    ) {
+        // 兼容已有显式循环阈值入口，并固定默认运行模式为 EXECUTE。
+        this(modelAdapter, messages, maxSteps, AgentRunMode.EXECUTE, toolCallLoopRepeatThreshold);
     }
 
     public AgentLoopRequest {
         Objects.requireNonNull(modelAdapter, "modelAdapter must not be null.");
+        Objects.requireNonNull(runMode, "runMode must not be null.");
         if (messages == null || messages.isEmpty()) {
             throw new IllegalArgumentException("messages must not be empty.");
         }

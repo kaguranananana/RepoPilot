@@ -118,8 +118,37 @@ class InteractiveCliSessionTest {
 
         assertEquals(0, runtimeRunner.runTurnCount.get());
         assertTrue(outputStream.toString(StandardCharsets.UTF_8).contains("/help"));
+        assertTrue(outputStream.toString(StandardCharsets.UTF_8).contains("/plan"));
+        assertTrue(outputStream.toString(StandardCharsets.UTF_8).contains("/execute"));
         assertTrue(outputStream.toString(StandardCharsets.UTF_8).contains("/reset"));
         assertTrue(outputStream.toString(StandardCharsets.UTF_8).contains("/exit"));
+    }
+
+    @Test
+    void shouldRunPlanCommandInPlanModeAndExecuteCommandInExecuteMode() {
+        RecordingSessionApiClient sessionApiClient = new RecordingSessionApiClient(List.of(
+                session("session-001", "workspace-001")
+        ));
+        RecordingRuntimeRunner runtimeRunner = new RecordingRuntimeRunner();
+        ByteArrayOutputStream outputStream = new ByteArrayOutputStream();
+        PrintWriter outputWriter = new PrintWriter(outputStream, true, StandardCharsets.UTF_8);
+
+        InteractiveCliSession session = new InteractiveCliSession(
+                new BufferedReader(new StringReader("/plan 分析修改方案\n/execute\n执行修改\n/exit\n")),
+                outputWriter,
+                sessionApiClient,
+                new InteractiveCliConfig("http://127.0.0.1:8080", "workspace-001"),
+                runtimeRunner,
+                new ConsoleTraceObserver(outputWriter)
+        );
+
+        session.start();
+
+        assertEquals(List.of("分析修改方案", "执行修改"), runtimeRunner.prompts);
+        assertEquals(List.of(InteractionMode.PLAN, InteractionMode.EXECUTE), runtimeRunner.recordedModes);
+        String output = outputStream.toString(StandardCharsets.UTF_8);
+        assertTrue(output.contains("[mode] PLAN"));
+        assertTrue(output.contains("[mode] EXECUTE"));
     }
 
     @Test
@@ -363,6 +392,7 @@ class InteractiveCliSessionTest {
         private final List<String> prompts = new ArrayList<>();
         private final List<String> activatedSkillNames = new ArrayList<>();
         private final List<List<ConversationMessage>> recordedHistories = new ArrayList<>();
+        private final List<InteractionMode> recordedModes = new ArrayList<>();
         private boolean failFirstRun;
 
         @Override
@@ -379,6 +409,18 @@ class InteractiveCliSessionTest {
                 AgentLoopObserver observer,
                 TracePublisher tracePublisher
         ) {
+            return runTurn(sessionSummary, history, prompt, observer, tracePublisher, InteractionMode.EXECUTE);
+        }
+
+        @Override
+        public InteractiveTurnResult runTurn(
+                SessionSummary sessionSummary,
+                List<ConversationMessage> history,
+                String prompt,
+                AgentLoopObserver observer,
+                TracePublisher tracePublisher,
+                InteractionMode interactionMode
+        ) {
             tracePublisher.publish(new TracePublisher.TraceEvent(
                     TraceEventType.MODEL_CALL_REQUESTED,
                     "测试 trace",
@@ -386,6 +428,7 @@ class InteractiveCliSessionTest {
                     Map.of("stepNumber", "1")
             ));
             recordedHistories.add(List.copyOf(history));
+            recordedModes.add(interactionMode);
             prompts.add(prompt);
             int invocation = runTurnCount.incrementAndGet();
             if (failFirstRun && invocation == 1) {

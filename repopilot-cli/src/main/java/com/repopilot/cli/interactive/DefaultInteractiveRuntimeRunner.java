@@ -5,6 +5,7 @@ import com.repopilot.core.agent.AgentLoop;
 import com.repopilot.core.agent.AgentLoopObserver;
 import com.repopilot.core.agent.AgentLoopRequest;
 import com.repopilot.core.agent.AgentLoopResult;
+import com.repopilot.core.agent.AgentRunMode;
 import com.repopilot.core.approval.ToolApprovalHandler;
 import com.repopilot.core.model.ConversationMessage;
 import com.repopilot.core.model.MessageRole;
@@ -113,7 +114,7 @@ public final class DefaultInteractiveRuntimeRunner implements InteractiveRuntime
         Objects.requireNonNull(sessionSummary, "sessionSummary must not be null.");
 
         ToolRegistry toolRegistry = createToolRegistry();
-        return rebuildPromptBoundary(sessionSummary, List.of(), toolRegistry);
+        return rebuildPromptBoundary(sessionSummary, List.of(), toolRegistry, AgentRunMode.EXECUTE);
     }
 
     @Override
@@ -124,14 +125,28 @@ public final class DefaultInteractiveRuntimeRunner implements InteractiveRuntime
             AgentLoopObserver observer,
             TracePublisher tracePublisher
     ) {
+        return runTurn(sessionSummary, history, prompt, observer, tracePublisher, InteractionMode.EXECUTE);
+    }
+
+    @Override
+    public InteractiveTurnResult runTurn(
+            SessionSummary sessionSummary,
+            List<ConversationMessage> history,
+            String prompt,
+            AgentLoopObserver observer,
+            TracePublisher tracePublisher,
+            InteractionMode interactionMode
+    ) {
         Objects.requireNonNull(sessionSummary, "sessionSummary must not be null.");
         Objects.requireNonNull(history, "history must not be null.");
         Objects.requireNonNull(observer, "observer must not be null.");
         Objects.requireNonNull(tracePublisher, "tracePublisher must not be null.");
+        Objects.requireNonNull(interactionMode, "interactionMode must not be null.");
         String safePrompt = requireNonBlank(prompt, "prompt must not be blank.");
+        AgentRunMode runMode = interactionMode.agentRunMode();
 
         ToolRegistry toolRegistry = createToolRegistry();
-        List<ConversationMessage> refreshedHistory = rebuildPromptBoundary(sessionSummary, history, toolRegistry);
+        List<ConversationMessage> refreshedHistory = rebuildPromptBoundary(sessionSummary, history, toolRegistry, runMode);
         List<ConversationMessage> messages = new ArrayList<>(refreshedHistory);
 
         // 每次新输入都只追加一条新的 USER 消息，
@@ -146,9 +161,10 @@ public final class DefaultInteractiveRuntimeRunner implements InteractiveRuntime
         );
         AgentLoop agentLoop = new AgentLoop(governedToolExecutor, observer, tracePublisher);
         AgentLoopResult result = agentLoop.run(new AgentLoopRequest(
-                modelAdapterFactory.create(sessionSummary, resolveEffectiveTools(refreshedHistory, toolRegistry)),
+                modelAdapterFactory.create(sessionSummary, resolveEffectiveTools(refreshedHistory, toolRegistry, runMode)),
                 messages,
-                maxSteps
+                maxSteps,
+                runMode
         ));
 
         return new InteractiveTurnResult(result.messages(), result.finalAnswer());
@@ -183,7 +199,8 @@ public final class DefaultInteractiveRuntimeRunner implements InteractiveRuntime
 
     private DynamicPromptContext buildDynamicPromptContext(
             SessionSummary sessionSummary,
-            List<ToolDefinition> availableTools
+            List<ToolDefinition> availableTools,
+            AgentRunMode runMode
     ) {
         return new DynamicPromptContext(
                 // 这里把 session 身份单独写进动态段，
@@ -200,25 +217,27 @@ public final class DefaultInteractiveRuntimeRunner implements InteractiveRuntime
                 Map.of(
                         "sessionId", sessionSummary.sessionId(),
                         "startedAt", Instant.now(clock).toString()
-                )
+                ),
+                runMode
         );
     }
 
     private List<ConversationMessage> rebuildPromptBoundary(
             SessionSummary sessionSummary,
             List<ConversationMessage> history,
-            ToolRegistry toolRegistry
+            ToolRegistry toolRegistry,
+            AgentRunMode runMode
     ) {
         // 先把旧的基础 prompt 和运行时上下文剥掉，
         // 避免每轮重建时把旧边界一层层叠加进历史。
         List<ConversationMessage> preservedHistory = stripPromptBoundaryMessages(history);
         // 再根据“剥离后的真实会话历史”重算当前有效工具子集，
         // 这样中途激活 Skill 后，下一轮 prompt 能立即收缩工具说明。
-        List<ToolDefinition> effectiveTools = resolveEffectiveTools(preservedHistory, toolRegistry);
+        List<ToolDefinition> effectiveTools = resolveEffectiveTools(preservedHistory, toolRegistry, runMode);
         // 用最新 session 信息和最新工具子集重建 prompt 边界，
         // 保证模型每轮看到的 system prompt 都和当前约束一致。
         SystemPromptBoundary promptBoundary = systemPromptBuilder.build(
-                buildDynamicPromptContext(sessionSummary, effectiveTools)
+                buildDynamicPromptContext(sessionSummary, effectiveTools, runMode)
         );
 
         // 最后把新边界放回最前面，
@@ -230,19 +249,20 @@ public final class DefaultInteractiveRuntimeRunner implements InteractiveRuntime
 
     private List<ToolDefinition> resolveEffectiveTools(
             List<ConversationMessage> history,
-            ToolRegistry toolRegistry
+            ToolRegistry toolRegistry,
+            AgentRunMode runMode
     ) {
         // 先拿到 runtime 当前注册的全局工具定义，
         // 这是任何 Skill 约束计算的上界。
-        List<ToolDefinition> globalTools = toolRegistry.list();
+        List<ToolDefinition> modeScopedTools = runMode.filterAvailableTools(toolRegistry.list());
         // 再把消息历史里的已激活 Skill 约束折叠成最终允许工具名集合，
         // 规则固定为“全局工具 ∩ 所有受约束 Skill 的 allowed-tools 交集”。
         List<String> effectiveToolNames = ActivatedSkillSet.fromMessages(history)
-                .resolveEffectiveAllowedTools(globalTools.stream().map(ToolDefinition::name).toList());
+                .resolveEffectiveAllowedTools(modeScopedTools.stream().map(ToolDefinition::name).toList());
 
         // 最后回到完整 ToolDefinition 列表，
         // 只把仍然留在有效子集里的定义传给 prompt 和模型适配层。
-        return globalTools.stream()
+        return modeScopedTools.stream()
                 .filter(toolDefinition -> effectiveToolNames.contains(toolDefinition.name()))
                 .toList();
     }

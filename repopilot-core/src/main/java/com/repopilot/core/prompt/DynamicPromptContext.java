@@ -1,5 +1,6 @@
 package com.repopilot.core.prompt;
 
+import com.repopilot.core.agent.AgentRunMode;
 import com.repopilot.core.skill.SkillSummary;
 import com.repopilot.core.tool.ToolDefinition;
 import java.util.ArrayList;
@@ -20,8 +21,28 @@ public record DynamicPromptContext(
         List<SkillSummary> skillSummaries,
         String budgetHint,
         List<ToolDefinition> availableTools,
-        Map<String, String> runtimeMetadata
+        Map<String, String> runtimeMetadata,
+        AgentRunMode runMode
 ) {
+
+    public DynamicPromptContext(
+            String sessionPreamble,
+            String workspaceContext,
+            List<SkillSummary> skillSummaries,
+            String budgetHint,
+            List<ToolDefinition> availableTools,
+            Map<String, String> runtimeMetadata
+    ) {
+        this(
+                sessionPreamble,
+                workspaceContext,
+                skillSummaries,
+                budgetHint,
+                availableTools,
+                runtimeMetadata,
+                AgentRunMode.EXECUTE
+        );
+    }
 
     public DynamicPromptContext {
         sessionPreamble = normalizeOptionalText(sessionPreamble);
@@ -30,6 +51,7 @@ public record DynamicPromptContext(
         budgetHint = normalizeOptionalText(budgetHint);
         availableTools = normalizeAvailableTools(availableTools);
         runtimeMetadata = normalizeRuntimeMetadata(runtimeMetadata);
+        runMode = Objects.requireNonNull(runMode, "runMode must not be null.");
     }
 
     private static String normalizeOptionalText(String value) {

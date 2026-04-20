@@ -31,6 +31,8 @@ public final class InteractiveCliSession {
     private static final String EXIT_COMMAND = "/exit";
     private static final String HELP_COMMAND = "/help";
     private static final String RESET_COMMAND = "/reset";
+    private static final String PLAN_COMMAND = "/plan";
+    private static final String EXECUTE_COMMAND = "/execute";
 
     private final InteractiveLineInput lineInput;
     private final PrintWriter outputWriter;
@@ -43,6 +45,7 @@ public final class InteractiveCliSession {
 
     private SessionSummary currentSession;
     private List<ConversationMessage> history = List.of();
+    private InteractionMode interactionMode = InteractionMode.EXECUTE;
 
     public static InteractiveCliSession createDefault() {
         Path workspaceRoot = Path.of("").toAbsolutePath().normalize();
@@ -177,6 +180,14 @@ public final class InteractiveCliSession {
                 resetSession();
                 continue;
             }
+            if (isModeCommand(normalizedInput, PLAN_COMMAND)) {
+                handleModeCommand(InteractionMode.PLAN, normalizedInput, PLAN_COMMAND);
+                continue;
+            }
+            if (isModeCommand(normalizedInput, EXECUTE_COMMAND)) {
+                handleModeCommand(InteractionMode.EXECUTE, normalizedInput, EXECUTE_COMMAND);
+                continue;
+            }
 
             runSingleInput(normalizedInput);
         }
@@ -199,9 +210,25 @@ public final class InteractiveCliSession {
             List<ConversationMessage> nextHistory = runtimeRunner.createInitialHistory(nextSession);
             this.currentSession = nextSession;
             this.history = nextHistory;
+            this.interactionMode = InteractionMode.EXECUTE;
             traceObserver.onSessionCreated(nextSession);
         } catch (RuntimeException exception) {
             traceObserver.onError(exception.getMessage());
+        }
+    }
+
+    private boolean isModeCommand(String input, String command) {
+        // 只接受精确命令或“命令 + 空格 + 任务”，不做自然语言自动切换。
+        return input.equals(command) || input.startsWith(command + " ");
+    }
+
+    private void handleModeCommand(InteractionMode nextMode, String input, String command) {
+        this.interactionMode = nextMode;
+        traceObserver.onInteractionModeChanged(nextMode);
+
+        String remainingPrompt = input.substring(command.length()).strip();
+        if (!remainingPrompt.isEmpty()) {
+            runSingleInput(remainingPrompt);
         }
     }
 
@@ -220,7 +247,8 @@ public final class InteractiveCliSession {
                     history,
                     input,
                     traceObserver,
-                    createTracePublisher(currentSession)
+                    createTracePublisher(currentSession),
+                    interactionMode
             );
             this.history = result.messages();
             traceObserver.onAssistantAnswer(result.finalAnswer());
@@ -247,7 +275,8 @@ public final class InteractiveCliSession {
                 history,
                 skillCommand.remainingPrompt(),
                 traceObserver,
-                createTracePublisher(currentSession)
+                createTracePublisher(currentSession),
+                interactionMode
         );
         this.history = turnResult.messages();
         traceObserver.onAssistantAnswer(turnResult.finalAnswer());

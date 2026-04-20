@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import com.repopilot.core.agent.AgentRunMode;
 import com.repopilot.core.skill.SkillSummary;
 import com.repopilot.core.tool.ToolDefinition;
 import java.util.List;
@@ -108,7 +109,7 @@ class SystemPromptBuilderTest {
     }
 
     @Test
-    void shouldRenderPlaceholderWhenSessionInstructionsAreEmpty() {
+    void shouldRenderRunModeWhenOtherSessionInstructionsAreEmpty() {
         SystemPromptBuilder builder = new SystemPromptBuilder();
 
         SystemPromptBoundary boundary = builder.build(new DynamicPromptContext(
@@ -120,7 +121,32 @@ class SystemPromptBuilderTest {
                 Map.of()
         ));
 
-        assertTrue(boundary.sessionInstructions().contains("当前没有额外会话指令。"));
-        assertTrue(boundary.runtimeContextBlock().isBlank());
+        assertTrue(boundary.sessionInstructions().contains("## 运行模式"));
+        assertTrue(boundary.sessionInstructions().contains("EXECUTE"));
+        assertTrue(boundary.runtimeContextBlock().contains("runMode: EXECUTE"));
+    }
+
+    @Test
+    void shouldRenderPlanModeReadOnlyBoundary() {
+        SystemPromptBuilder builder = new SystemPromptBuilder();
+
+        SystemPromptBoundary boundary = builder.build(new DynamicPromptContext(
+                "先分析再给计划。",
+                "workspace",
+                List.of(),
+                "预算",
+                List.of(
+                        new ToolDefinition("read_file", "读取文件"),
+                        new ToolDefinition("grep_files", "搜索文件")
+                ),
+                Map.of("session_id", "session-plan"),
+                AgentRunMode.PLAN
+        ));
+
+        assertTrue(boundary.sessionInstructions().contains("## 运行模式"));
+        assertTrue(boundary.sessionInstructions().contains("PLAN"));
+        assertTrue(boundary.sessionInstructions().contains("只读"));
+        assertTrue(boundary.sessionInstructions().contains("实施计划"));
+        assertTrue(boundary.runtimeContextBlock().contains("runMode: PLAN"));
     }
 }

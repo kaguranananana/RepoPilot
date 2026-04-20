@@ -153,6 +153,22 @@ class ConsoleTraceObserverTest {
     }
 
     @Test
+    void shouldPrintInteractionModeSummary() {
+        ByteArrayOutputStream outputStream = new ByteArrayOutputStream();
+        PrintWriter outputWriter = new PrintWriter(outputStream, true, StandardCharsets.UTF_8);
+        ConsoleTraceObserver observer = new ConsoleTraceObserver(outputWriter);
+
+        observer.onInteractionModeChanged(InteractionMode.PLAN);
+        observer.onInteractionModeChanged(InteractionMode.EXECUTE);
+
+        String output = outputStream.toString(StandardCharsets.UTF_8);
+        assertTrue(output.contains("[mode] PLAN"));
+        assertTrue(output.contains("只读"));
+        assertTrue(output.contains("[mode] EXECUTE"));
+        assertTrue(output.contains("可执行修改"));
+    }
+
+    @Test
     void shouldPrintVerboseMessageFlowForToolRoundTrip() {
         ByteArrayOutputStream outputStream = new ByteArrayOutputStream();
         PrintWriter outputWriter = new PrintWriter(outputStream, true, StandardCharsets.UTF_8);
