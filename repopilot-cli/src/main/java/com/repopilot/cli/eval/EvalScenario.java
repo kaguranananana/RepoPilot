@@ -294,11 +294,16 @@ public record EvalScenario(
                 "连续读取文件直到触发上下文压缩",
                 8,
                 new ContextCompactionPolicy(4, 2, 2),
-                workspace -> writeFile(workspace, "notes/a.txt", "A\n"),
+                workspace -> {
+                    // 压缩场景需要制造多轮工具消息，但不能再连续重复同一个工具 key。
+                    writeFile(workspace, "notes/a.txt", "A\n");
+                    writeFile(workspace, "notes/b.txt", "B\n");
+                    writeFile(workspace, "notes/c.txt", "C\n");
+                },
                 List.of(
                         tool("call-read-1", "read_file", Map.of("path", "notes/a.txt")),
-                        tool("call-read-2", "read_file", Map.of("path", "notes/a.txt")),
-                        tool("call-read-3", "read_file", Map.of("path", "notes/a.txt")),
+                        tool("call-read-2", "read_file", Map.of("path", "notes/b.txt")),
+                        tool("call-read-3", "read_file", Map.of("path", "notes/c.txt")),
                         new FinalModelResponse("压缩链路完成")
                 ),
                 execution -> {

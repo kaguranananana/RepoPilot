@@ -1,5 +1,6 @@
 package com.repopilot.core.agent;
 
+import com.repopilot.core.agent.loop.ToolCallLoopDetectionResult;
 import com.repopilot.core.model.ConversationMessage;
 import com.repopilot.core.model.ModelResponse;
 import com.repopilot.core.model.ToolCall;
@@ -30,6 +31,13 @@ public interface AgentLoopObserver {
     }
 
     default void onToolMessageAdded(int stepNumber, ToolCall toolCall, ConversationMessage toolMessage) {
+    }
+
+    /**
+     * 工具调用连续重复达到阈值时通知外层。
+     * 观察器只负责展示事实，不改变中断决策。
+     */
+    default void onToolCallLoopDetected(int stepNumber, ToolCallLoopDetectionResult detectionResult) {
     }
 
     /**

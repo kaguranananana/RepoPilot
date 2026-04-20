@@ -1,6 +1,7 @@
 package com.repopilot.cli.interactive;
 
 import com.repopilot.core.agent.AgentLoopObserver;
+import com.repopilot.core.agent.loop.ToolCallLoopDetectionResult;
 import com.repopilot.core.model.ConversationMessage;
 import com.repopilot.core.model.FinalModelResponse;
 import com.repopilot.core.model.MessageRole;
@@ -124,6 +125,19 @@ public final class ConsoleTraceObserver implements AgentLoopObserver {
         }
 
         outputWriter.print(renderToolMessageBlock(toolMessage));
+        outputWriter.flush();
+    }
+
+    @Override
+    public void onToolCallLoopDetected(int stepNumber, ToolCallLoopDetectionResult detectionResult) {
+        // loop 摘要只展示确定性字段，避免把完整工具参数或模型上下文刷到终端。
+        outputWriter.printf(
+                "[loop] step=%d tool=%s repeatCount=%d %s%n",
+                stepNumber,
+                detectionResult.toolName(),
+                detectionResult.repeatCount(),
+                detectionResult.argumentsSummary()
+        );
         outputWriter.flush();
     }
 

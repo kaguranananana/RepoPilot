@@ -2,6 +2,7 @@ package com.repopilot.cli.interactive;
 
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import com.repopilot.core.agent.loop.ToolCallLoopDetectionResult;
 import com.repopilot.core.model.ConversationMessage;
 import com.repopilot.core.model.FinalModelResponse;
 import com.repopilot.core.model.MessageRole;
@@ -128,6 +129,27 @@ class ConsoleTraceObserverTest {
 
         String output = outputStream.toString(StandardCharsets.UTF_8);
         assertTrue(output.contains("[tool:fatal] grep_files 搜索文件失败: Input length = 1"));
+    }
+
+    @Test
+    void shouldPrintLoopDetectedSummary() {
+        ByteArrayOutputStream outputStream = new ByteArrayOutputStream();
+        PrintWriter outputWriter = new PrintWriter(outputStream, true, StandardCharsets.UTF_8);
+        ConsoleTraceObserver observer = new ConsoleTraceObserver(outputWriter);
+
+        observer.onToolCallLoopDetected(
+                3,
+                new ToolCallLoopDetectionResult(
+                        true,
+                        "read_file",
+                        "read_file|path=README.md",
+                        3,
+                        "path=README.md"
+                )
+        );
+
+        String output = outputStream.toString(StandardCharsets.UTF_8);
+        assertTrue(output.contains("[loop] step=3 tool=read_file repeatCount=3 path=README.md"));
     }
 
     @Test

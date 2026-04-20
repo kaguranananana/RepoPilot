@@ -4,6 +4,9 @@ import com.repopilot.core.context.ContextCompactionPolicy;
 import com.repopilot.core.context.ContextCompactor;
 import com.repopilot.core.context.WorkingMemory;
 import com.repopilot.core.context.WorkingMemorySnapshot;
+import com.repopilot.core.agent.loop.ToolCallLoopDetectedException;
+import com.repopilot.core.agent.loop.ToolCallLoopDetectionResult;
+import com.repopilot.core.agent.loop.ToolCallLoopDetector;
 import com.repopilot.core.model.ConversationMessage;
 import com.repopilot.core.model.FinalModelResponse;
 import com.repopilot.core.model.MessageRole;
@@ -17,14 +20,14 @@ import com.repopilot.core.tool.ToolExecutionContext;
 import com.repopilot.core.tool.ToolExecutionResult;
 import com.repopilot.core.tool.ToolRegistry;
 import com.repopilot.core.tool.governance.GovernedToolExecutor;
+import com.repopilot.protocol.trace.TraceEventType;
+import java.nio.file.Path;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
-import java.nio.file.Path;
-import com.repopilot.protocol.trace.TraceEventType;
 
 /**
  * RepoPilot 的最小 ReAct 主循环。
@@ -102,6 +105,8 @@ public class AgentLoop {
     public AgentLoopResult run(AgentLoopRequest request) {
         List<ConversationMessage> messages = new ArrayList<>(request.messages());
         WorkingMemory workingMemory = WorkingMemory.initialize(messages, contextCompactor.policy());
+        ToolCallLoopDetector toolCallLoopDetector =
+                new ToolCallLoopDetector(request.toolCallLoopRepeatThreshold());
 
         for (int step = 0; step < request.maxSteps(); step++) {
             messages = compactMessagesIfNeeded(step + 1, messages, workingMemory);
@@ -131,6 +136,17 @@ public class AgentLoop {
                 messages.add(ConversationMessage.assistantToolCalls(toolCallResponse.toolCalls()));
 
                 for (ToolCall toolCall : toolCallResponse.toolCalls()) {
+                    // 每个工具调用先进入确定性循环检测，
+                    // 这样命中阈值的那一次不会再真正执行工具。
+                    ToolCallLoopDetectionResult loopDetectionResult = toolCallLoopDetector.record(toolCall);
+                    // 只要连续重复次数达到显式阈值，
+                    // 当前回合就必须中断并暴露真实原因。
+                    if (loopDetectionResult.loopDetected()) {
+                        observer.onToolCallLoopDetected(step + 1, loopDetectionResult);
+                        publishToolCallLoopDetected(step + 1, loopDetectionResult);
+                        throw new ToolCallLoopDetectedException(loopDetectionResult);
+                    }
+
                     // 先通知工具即将开始，
                     // 让外层观察器能够打印工具名和参数摘要。
                     observer.onToolExecutionStarted(step + 1, toolCall);
@@ -300,6 +316,28 @@ public class AgentLoop {
                         "toolCallId", toolCall.id(),
                         "toolName", toolCall.toolName(),
                         "toolStatus", executionResult.status().name()
+                )
+        ));
+    }
+
+    private void publishToolCallLoopDetected(
+            int stepNumber,
+            ToolCallLoopDetectionResult loopDetectionResult
+    ) {
+        tracePublisher.publish(new TracePublisher.TraceEvent(
+                TraceEventType.TOOL_CALL_LOOP_DETECTED,
+                "第%d步检测到连续重复工具调用: %s repeatCount=%d".formatted(
+                        stepNumber,
+                        loopDetectionResult.toolName(),
+                        loopDetectionResult.repeatCount()
+                ),
+                Instant.now(),
+                Map.of(
+                        "stepNumber", Integer.toString(stepNumber),
+                        "toolName", loopDetectionResult.toolName(),
+                        "toolCallKey", loopDetectionResult.toolCallKey(),
+                        "repeatCount", Integer.toString(loopDetectionResult.repeatCount()),
+                        "argumentsSummary", loopDetectionResult.argumentsSummary()
                 )
         ));
     }

@@ -6,6 +6,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import com.repopilot.core.agent.AgentLoop;
 import com.repopilot.core.agent.AgentLoopRequest;
 import com.repopilot.core.agent.AgentLoopResult;
+import com.repopilot.core.agent.loop.ToolCallLoopDetectedException;
 import com.repopilot.core.model.ConversationMessage;
 import com.repopilot.core.model.FinalModelResponse;
 import com.repopilot.core.model.MessageRole;
@@ -119,6 +120,41 @@ class TracePublishingAgentLoopTest {
                 tracePublisher.events().stream().map(TracePublisher.TraceEvent::type).toList()
         );
         assertEquals("FATAL_ERROR", tracePublisher.events().get(3).metadata().get("toolStatus"));
+    }
+
+    @Test
+    void shouldPublishLoopDetectedTraceBeforeInterruptingMainLoop() {
+        ToolRegistry toolRegistry = new ToolRegistry();
+        toolRegistry.register("read_file", "读取文件", arguments -> ToolExecutionResult.success("文件内容"));
+
+        RecordingTracePublisher tracePublisher = new RecordingTracePublisher();
+        ModelAdapter modelAdapter = new ScriptedModelAdapter(List.of(
+                new ToolCallModelResponse(List.of(new ToolCall("call-1", "read_file", Map.of("path", "README.md")))),
+                new ToolCallModelResponse(List.of(new ToolCall("call-2", "read_file", Map.of("path", "README.md")))),
+                new ToolCallModelResponse(List.of(new ToolCall("call-3", "read_file", Map.of("path", "README.md"))))
+        ));
+
+        ToolCallLoopDetectedException exception = assertThrows(
+                ToolCallLoopDetectedException.class,
+                () -> new AgentLoop(toolRegistry, tracePublisher).run(new AgentLoopRequest(
+                        modelAdapter,
+                        List.of(new ConversationMessage(MessageRole.USER, "读取 README.md")),
+                        5,
+                        3
+                ))
+        );
+
+        assertEquals(
+                "连续重复工具调用导致终止: toolName=read_file, repeatCount=3, arguments=path=README.md",
+                exception.getMessage()
+        );
+        assertEquals(11, tracePublisher.events().size());
+        TracePublisher.TraceEvent loopEvent = tracePublisher.events().get(10);
+        assertEquals(TraceEventType.TOOL_CALL_LOOP_DETECTED, loopEvent.type());
+        assertEquals("3", loopEvent.metadata().get("stepNumber"));
+        assertEquals("read_file", loopEvent.metadata().get("toolName"));
+        assertEquals("3", loopEvent.metadata().get("repeatCount"));
+        assertEquals("path=README.md", loopEvent.metadata().get("argumentsSummary"));
     }
 
     private static final class RecordingTracePublisher implements TracePublisher {
