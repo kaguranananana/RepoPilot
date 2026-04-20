@@ -1,6 +1,7 @@
 package com.repopilot.core.review;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.nio.file.Files;
@@ -85,5 +86,35 @@ class DiffReviewServiceTest {
         assertTrue(summary.summary().contains("addedLineCount: 1"));
         assertTrue(summary.summary().contains("removedLineCount: 1"));
         assertEquals("第一行\n第二行\n", Files.readString(targetFile));
+    }
+
+    @Test
+    void shouldExposeAttemptedOriginalLinesWhenApplyPatchPreviewContextMismatch() throws Exception {
+        Path targetFile = workspaceRoot.resolve("target/real-e2e/Demo-manual.txt");
+        Files.createDirectories(targetFile.getParent());
+        Files.writeString(targetFile, "name=RepoPilot\nstatus=draft\n");
+
+        DiffReviewService diffReviewService = new DiffReviewService(workspaceRoot);
+
+        DiffReviewService.DiffReviewFailure exception = assertThrows(
+                DiffReviewService.DiffReviewFailure.class,
+                () -> diffReviewService.review(
+                        "apply_patch",
+                        Map.of(
+                                "path", "target/real-e2e/Demo-manual.txt",
+                                "patch", """
+                                        @@
+                                         status=draft
+                                        -status=draft
+                                        +status=ready
+                                        """
+                        )
+                )
+        );
+
+        assertTrue(exception.getMessage().contains("CONTEXT_MISMATCH"));
+        assertTrue(exception.getMessage().contains("attemptedOriginalLines:"));
+        assertTrue(exception.getMessage().contains("1| status=draft"));
+        assertTrue(exception.getMessage().contains("2| status=draft"));
     }
 }

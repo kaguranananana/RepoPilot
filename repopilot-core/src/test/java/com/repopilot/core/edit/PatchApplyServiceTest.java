@@ -79,6 +79,33 @@ class PatchApplyServiceTest {
     }
 
     @Test
+    void shouldExposeAttemptedOriginalLinesWhenContextMismatchHappens() throws Exception {
+        Path targetFile = workspaceRoot.resolve("target/real-e2e/Demo-manual.txt");
+        Files.createDirectories(targetFile.getParent());
+        Files.writeString(targetFile, "name=RepoPilot\nstatus=draft\n");
+        PatchApplyService service = new PatchApplyService(workspaceRoot);
+
+        PatchApplyService.PatchApplyException exception = assertThrows(
+                PatchApplyService.PatchApplyException.class,
+                () -> service.apply(new PatchApplyRequest(
+                        "target/real-e2e/Demo-manual.txt",
+                        """
+                                @@
+                                 status=draft
+                                -status=draft
+                                +status=ready
+                                """
+                ))
+        );
+
+        assertEquals(PatchApplyService.ErrorType.CONTEXT_MISMATCH, exception.errorType());
+        assertTrue(exception.getMessage().contains("attemptedOriginalLines:"));
+        assertTrue(exception.getMessage().contains("1| status=draft"));
+        assertTrue(exception.getMessage().contains("2| status=draft"));
+        assertEquals("name=RepoPilot\nstatus=draft\n", Files.readString(targetFile));
+    }
+
+    @Test
     void shouldExposeMissingTargetFile() {
         PatchApplyService service = new PatchApplyService(workspaceRoot);
 

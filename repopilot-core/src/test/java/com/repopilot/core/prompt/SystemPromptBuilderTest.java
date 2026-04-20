@@ -100,6 +100,11 @@ class SystemPromptBuilderTest {
         assertTrue(boundary.baseInstructions().contains("不得先搜索文件名"));
         assertTrue(boundary.baseInstructions().contains("替换已有行时"));
         assertTrue(boundary.baseInstructions().contains("同时包含删除行和新增行"));
+        assertTrue(boundary.baseInstructions().contains("收到 apply_patch 的 CONTEXT_MISMATCH"));
+        assertTrue(boundary.baseInstructions().contains("必须先重新 read_file"));
+        assertTrue(boundary.baseInstructions().contains("不要把同一旧行同时写成空格上下文和删除行"));
+        assertTrue(boundary.baseInstructions().contains("坏例子"));
+        assertTrue(boundary.baseInstructions().contains("好例子"));
     }
 
     @Test

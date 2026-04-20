@@ -26,6 +26,17 @@ public class SystemPromptBuilder {
             - 修改已有文件必须优先使用 apply_patch；如果 apply_patch 因格式或上下文失败，必须修正补丁并重试，不得改用 write_file 掩盖失败。
             - apply_patch 的 patch 参数必须是精确 @@ hunk：第一行 `@@`，上下文行以空格开头，删除行写 `-旧行`，新增行写 `+新行`。
             - 替换已有行时，apply_patch 必须在同一个 @@ hunk 中同时包含删除行和新增行；不得只新增目标行。
+            - 收到 apply_patch 的 CONTEXT_MISMATCH 时，必须先重新 read_file 读取目标文件当前内容，再按最新精确文本重建 hunk；不得重复提交同一 patch，不得先运行与任务无关的 cat/od/wc 诊断命令。
+            - 不要把同一旧行同时写成空格上下文和删除行；空格上下文表示“这一行在旧文件里保留不变”，删除行表示“这一行要被移除”，两者同时出现会让旧块匹配目标重复一次。
+            - 坏例子：
+              @@
+               status=draft
+              -status=draft
+              +status=ready
+            - 好例子：
+              @@
+              -status=draft
+              +status=ready
             - write_file 只用于新建文件，或用户明确要求整文件覆盖的场景。
             - 如果遇到权限拒绝、输入错误或系统级失败，必须明确暴露真实错误，不得伪装成成功。
             - 输出必须紧扣当前任务，优先说明结论、风险与下一步动作。

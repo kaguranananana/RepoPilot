@@ -140,10 +140,12 @@ public final class PatchApplyService {
     private HunkApplyResult applyHunk(List<String> currentLines, PatchHunk hunk, int hunkNumber) {
         List<Integer> matchIndexes = findExactMatches(currentLines, hunk.originalLines());
         if (matchIndexes.isEmpty()) {
-            throw contextMismatch("第 %d 个 hunk 上下文不匹配。".formatted(hunkNumber));
+            throw contextMismatch(buildContextMismatchMessage(hunkNumber, hunk.originalLines()));
         }
         if (matchIndexes.size() > 1) {
-            throw contextMismatch("第 %d 个 hunk 上下文不唯一，匹配次数: %d。".formatted(hunkNumber, matchIndexes.size()));
+            throw contextMismatch(
+                    buildNonUniqueContextMessage(hunkNumber, matchIndexes.size(), hunk.originalLines())
+            );
         }
 
         int startIndex = matchIndexes.get(0);
@@ -180,6 +182,40 @@ public final class PatchApplyService {
             }
         }
         return true;
+    }
+
+    private String buildContextMismatchMessage(int hunkNumber, List<String> originalLines) {
+        // 这里直接暴露“补丁服务实际尝试匹配的旧块”，
+        // 让上层和模型都能看到精确失败对象，而不是只拿到抽象的 mismatch 结论。
+        return """
+                第 %d 个 hunk 上下文不匹配。
+                attemptedOriginalLines:
+                %s
+                """.formatted(hunkNumber, renderDebugLines(originalLines)).stripTrailing();
+    }
+
+    private String buildNonUniqueContextMessage(int hunkNumber, int matchCount, List<String> originalLines) {
+        // 多次命中同样需要把真实旧块带出来，
+        // 否则上层只能知道“有歧义”，却不知道歧义到底来自哪段文本。
+        return """
+                第 %d 个 hunk 上下文不唯一，匹配次数: %d。
+                attemptedOriginalLines:
+                %s
+                """.formatted(hunkNumber, matchCount, renderDebugLines(originalLines)).stripTrailing();
+    }
+
+    private String renderDebugLines(List<String> lines) {
+        StringBuilder builder = new StringBuilder();
+        for (int index = 0; index < lines.size(); index++) {
+            if (index > 0) {
+                builder.append('\n');
+            }
+            // 行号从 1 开始，方便直接对照 patch hunk 内的相对顺序。
+            builder.append(index + 1)
+                    .append("| ")
+                    .append(lines.get(index));
+        }
+        return builder.toString();
     }
 
     private PatchApplyResult buildResult(
