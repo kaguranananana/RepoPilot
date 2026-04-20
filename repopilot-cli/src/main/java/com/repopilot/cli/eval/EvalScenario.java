@@ -1,5 +1,7 @@
 package com.repopilot.cli.eval;
 
+import com.repopilot.cli.runtime.CliModelConfig;
+import com.repopilot.cli.runtime.OpenAiCompatibleChatModelAdapter;
 import com.repopilot.core.agent.AgentLoopResult;
 import com.repopilot.core.context.ContextCompactionPolicy;
 import com.repopilot.core.model.FinalModelResponse;
@@ -7,7 +9,10 @@ import com.repopilot.core.model.ModelAdapter;
 import com.repopilot.core.model.ModelResponse;
 import com.repopilot.core.model.ToolCall;
 import com.repopilot.core.model.ToolCallModelResponse;
+import com.repopilot.core.skill.SkillLoader;
 import com.repopilot.core.trace.TracePublisher;
+import com.repopilot.core.tool.ToolRegistry;
+import com.repopilot.core.tool.builtin.BuiltinToolRegistrar;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -102,6 +107,51 @@ public record EvalScenario(
         );
     }
 
+    public static EvalScenario realModel(
+            String id,
+            String title,
+            String prompt,
+            int maxSteps,
+            WorkspaceInitializer workspaceInitializer,
+            CliModelConfig modelConfig,
+            ScenarioVerifier scenarioVerifier
+    ) {
+        return realModel(
+                id,
+                title,
+                prompt,
+                maxSteps,
+                ContextCompactionPolicy.defaultPolicy(),
+                workspaceInitializer,
+                modelConfig,
+                scenarioVerifier
+        );
+    }
+
+    public static EvalScenario realModel(
+            String id,
+            String title,
+            String prompt,
+            int maxSteps,
+            ContextCompactionPolicy contextCompactionPolicy,
+            WorkspaceInitializer workspaceInitializer,
+            CliModelConfig modelConfig,
+            ScenarioVerifier scenarioVerifier
+    ) {
+        CliModelConfig safeModelConfig = requireRealModelConfig(modelConfig);
+        return new EvalScenario(
+                id,
+                title,
+                RuntimeKind.REAL_MODEL_PROVIDER,
+                prompt,
+                maxSteps,
+                contextCompactionPolicy,
+                workspaceInitializer,
+                workspaceRoot -> createRealModelAdapter(safeModelConfig, workspaceRoot),
+                scenarioVerifier
+        );
+    }
+
     public static List<EvalScenario> defaultScriptedScenarios() {
         return List.of(
                 codeSearchScenario(),
@@ -114,6 +164,16 @@ public record EvalScenario(
                 writeFileScenario(),
                 multiToolScenario(),
                 commandFailureExposureScenario()
+        );
+    }
+
+    public static List<EvalScenario> defaultRealModelScenarios(CliModelConfig modelConfig) {
+        CliModelConfig safeModelConfig = requireRealModelConfig(modelConfig);
+        return List.of(
+                realModelCodeSearchScenario(safeModelConfig),
+                realModelFileReadScenario(safeModelConfig),
+                realModelPatchEditScenario(safeModelConfig),
+                realModelCommandValidationScenario(safeModelConfig)
         );
     }
 
@@ -306,8 +366,94 @@ public record EvalScenario(
         );
     }
 
+    private static EvalScenario realModelCodeSearchScenario(CliModelConfig modelConfig) {
+        return realModel(
+                "code-search",
+                "真实模型代码搜索",
+                "请只使用 grep_files 在 src 目录中搜索 `status=draft`，不要读取文件，不要运行命令，找到后简短汇报。",
+                10,
+                workspace -> writeFile(workspace, "src/Demo.txt", "name=RepoPilot\nstatus=draft\n"),
+                modelConfig,
+                execution -> {
+                    requireToolMessage(execution, "[grep_files]");
+                    requireToolMessage(execution, "status=draft");
+                }
+        );
+    }
+
+    private static EvalScenario realModelFileReadScenario(CliModelConfig modelConfig) {
+        return realModel(
+                "file-read",
+                "真实模型文件读取",
+                "请直接 read_file 读取 README.md，不要搜索，不要运行命令，最后简短汇报第一行内容。",
+                10,
+                workspace -> writeFile(workspace, "README.md", "# RepoPilot\n"),
+                modelConfig,
+                execution -> requireToolMessage(execution, "# RepoPilot")
+        );
+    }
+
+    private static EvalScenario realModelPatchEditScenario(CliModelConfig modelConfig) {
+        return realModel(
+                "patch-edit",
+                "真实模型补丁修改",
+                """
+                        请严格按顺序使用工具完成任务：
+                        1) 直接 read_file 读取 src/Demo.txt，不要搜索，不要运行 find 或 ls；
+                        2) 使用 apply_patch 在同一个 @@ hunk 中把 status=draft 替换为 status=ready，必须同时包含 -status=draft 和 +status=ready；
+                        3) 运行 grep -n 'status=ready' src/Demo.txt 验证；
+                        4) 简短汇报。
+                        """,
+                16,
+                workspace -> writeFile(workspace, "src/Demo.txt", "name=RepoPilot\nstatus=draft\n"),
+                modelConfig,
+                execution -> {
+                    requireToolMessage(execution, "PATCH_APPLY");
+                    requireToolMessage(execution, "2:status=ready");
+                    requireFileContent(execution.workspaceRoot(), "src/Demo.txt", "name=RepoPilot\nstatus=ready\n");
+                }
+        );
+    }
+
+    private static EvalScenario realModelCommandValidationScenario(CliModelConfig modelConfig) {
+        return realModel(
+                "command-validation",
+                "真实模型命令验证",
+                """
+                        请按顺序完成任务：
+                        1) 直接 read_file 读取 src/Demo.txt；
+                        2) 运行 grep -n 'status=ready' src/Demo.txt 验证状态；
+                        3) 不要修改文件；
+                        4) 简短汇报。
+                        """,
+                10,
+                workspace -> writeFile(workspace, "src/Demo.txt", "name=RepoPilot\nstatus=ready\n"),
+                modelConfig,
+                execution -> {
+                    requireToolMessage(execution, "exitCode: 0");
+                    requireToolMessage(execution, "2:status=ready");
+                    requireFileContent(execution.workspaceRoot(), "src/Demo.txt", "name=RepoPilot\nstatus=ready\n");
+                }
+        );
+    }
+
     private static ToolCallModelResponse tool(String id, String toolName, Map<String, String> arguments) {
         return new ToolCallModelResponse(List.of(new ToolCall(id, toolName, arguments)));
+    }
+
+    private static ModelAdapter createRealModelAdapter(CliModelConfig modelConfig, Path workspaceRoot) {
+        ToolRegistry toolRegistry = new ToolRegistry();
+        BuiltinToolRegistrar.registerAll(
+                toolRegistry,
+                workspaceRoot,
+                SkillLoader.createDefault(workspaceRoot, workspaceRoot.resolve("home"))
+        );
+        return new OpenAiCompatibleChatModelAdapter(
+                modelConfig.apiKey(),
+                modelConfig.baseUrl(),
+                modelConfig.modelName(),
+                toolRegistry.list()
+        );
     }
 
     private static void writeFile(Path workspaceRoot, String relativePath, String content) throws IOException {
@@ -345,6 +491,14 @@ public record EvalScenario(
             throw new IllegalArgumentException(message);
         }
         return value.strip();
+    }
+
+    private static CliModelConfig requireRealModelConfig(CliModelConfig modelConfig) {
+        CliModelConfig safeModelConfig = Objects.requireNonNull(modelConfig, "modelConfig must not be null.");
+        if (!"openai-compatible".equals(safeModelConfig.provider())) {
+            throw new IllegalArgumentException("REAL_MODEL_PROVIDER 评估要求 REPOPILOT_MODEL_PROVIDER=openai-compatible。");
+        }
+        return safeModelConfig;
     }
 
     public enum RuntimeKind {

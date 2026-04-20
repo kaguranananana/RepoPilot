@@ -4,9 +4,12 @@ import com.repopilot.cli.eval.EvalReportWriter;
 import com.repopilot.cli.eval.EvalResult;
 import com.repopilot.cli.eval.EvalRunner;
 import com.repopilot.cli.eval.EvalScenario;
+import com.repopilot.cli.runtime.CliModelConfig;
+import com.repopilot.cli.runtime.LocalEnvironmentMapLoader;
 import java.nio.file.Path;
 import java.time.Clock;
 import java.util.List;
+import java.util.Objects;
 import java.util.concurrent.Callable;
 import picocli.CommandLine.Command;
 import picocli.CommandLine.Model.CommandSpec;
@@ -25,6 +28,9 @@ import picocli.CommandLine.Spec;
 )
 public class EvalCommand implements Callable<Integer> {
 
+    private final Clock clock;
+    private final ScenarioFactory scenarioFactory;
+
     @Option(
             names = "--runtime-kind",
             defaultValue = "SCRIPTED_RUNTIME",
@@ -34,40 +40,91 @@ public class EvalCommand implements Callable<Integer> {
 
     @Option(
             names = "--workspace-root",
-            defaultValue = "target/repopilot-eval-workspaces",
-            description = "评估场景工作区根目录。"
+            description = "评估场景工作区根目录；未显式指定时会按 runtime-kind 选择默认目录。"
     )
     private Path workspaceRoot;
 
     @Option(
             names = "--output",
-            defaultValue = "target/repopilot-eval-report.json",
-            description = "结构化评估报告输出路径。"
+            description = "结构化评估报告输出路径；未显式指定时会按 runtime-kind 选择默认文件。"
     )
     private Path output;
 
     @Spec
     private CommandSpec spec;
 
+    public EvalCommand() {
+        this(Clock.systemUTC(), EvalCommand::loadDefaultScenarios);
+    }
+
+    EvalCommand(Clock clock, ScenarioFactory scenarioFactory) {
+        this.clock = Objects.requireNonNull(clock, "clock must not be null.");
+        this.scenarioFactory = Objects.requireNonNull(scenarioFactory, "scenarioFactory must not be null.");
+    }
+
     @Override
     public Integer call() {
-        if (runtimeKind != EvalScenario.RuntimeKind.SCRIPTED_RUNTIME) {
-            throw new IllegalArgumentException("真实模型 provider 评估场景尚未接入，不能复用 scripted runtime 指标。");
-        }
-
-        List<EvalScenario> scenarios = EvalScenario.defaultScriptedScenarios();
-        EvalResult result = new EvalRunner(workspaceRoot, Clock.systemUTC()).run(scenarios);
-        new EvalReportWriter().write(result, output);
+        // 这里先按 runtime-kind 解析场景集，
+        // 保证 scripted baseline 和真实模型评估各自走独立任务集，
+        // 不会把两种口径的成功率混写到同一套默认场景里。
+        List<EvalScenario> scenarios = scenarioFactory.create(runtimeKind);
+        Path effectiveWorkspaceRoot = resolveWorkspaceRoot(runtimeKind);
+        Path effectiveOutput = resolveOutput(runtimeKind);
+        EvalResult result = new EvalRunner(effectiveWorkspaceRoot, clock).run(scenarios);
+        new EvalReportWriter().write(result, effectiveOutput);
 
         // CLI 只打印最小摘要，
         // 详细指标和逐场景失败诊断以 JSON 报告为准。
         spec.commandLine().getOut().printf(
                 "eval report: %s%nscenario_count=%d task_success_rate=%.4f tool_call_valid_rate=%.4f%n",
-                output.toAbsolutePath().normalize(),
+                effectiveOutput.toAbsolutePath().normalize(),
                 result.scenarioCount(),
                 result.taskSuccessRate(),
                 result.toolCallValidRate()
         );
         return result.taskSuccessRate() == 1.0 ? 0 : 1;
+    }
+
+    private Path resolveWorkspaceRoot(EvalScenario.RuntimeKind runtimeKind) {
+        if (workspaceRoot != null) {
+            return workspaceRoot;
+        }
+
+        return switch (runtimeKind) {
+            case SCRIPTED_RUNTIME -> Path.of("target/repopilot-eval-workspaces");
+            case REAL_MODEL_PROVIDER -> Path.of("target/repopilot-real-model-eval-workspaces");
+        };
+    }
+
+    private Path resolveOutput(EvalScenario.RuntimeKind runtimeKind) {
+        if (output != null) {
+            return output;
+        }
+
+        return switch (runtimeKind) {
+            case SCRIPTED_RUNTIME -> Path.of("target/repopilot-eval-report.json");
+            case REAL_MODEL_PROVIDER -> Path.of("target/repopilot-real-model-eval-report.json");
+        };
+    }
+
+    private static List<EvalScenario> loadDefaultScenarios(EvalScenario.RuntimeKind runtimeKind) {
+        return switch (runtimeKind) {
+            case SCRIPTED_RUNTIME -> EvalScenario.defaultScriptedScenarios();
+            case REAL_MODEL_PROVIDER -> EvalScenario.defaultRealModelScenarios(loadRealModelConfig());
+        };
+    }
+
+    private static CliModelConfig loadRealModelConfig() {
+        // 真实模型评估读取的是当前仓库根目录配置，
+        // 而不是每个场景自己的临时工作区，
+        // 这样 API Key / Base URL / Model 才不会随着场景重建被覆盖掉。
+        Path projectRoot = Path.of("").toAbsolutePath().normalize();
+        return CliModelConfig.fromEnvironment(LocalEnvironmentMapLoader.load(projectRoot, System.getenv()));
+    }
+
+    @FunctionalInterface
+    interface ScenarioFactory {
+
+        List<EvalScenario> create(EvalScenario.RuntimeKind runtimeKind);
     }
 }
