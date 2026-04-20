@@ -17,17 +17,19 @@ class LocalEnvironmentMapLoaderTest {
     @Test
     void shouldLoadDotEnvLocalValuesFromWorkspaceRoot() throws Exception {
         Files.writeString(workspaceRoot.resolve(".env.local"), """
-                # DeepSeek 本地配置
-                REPOPILOT_MODEL_PROVIDER=deepseek
-                DEEPSEEK_API_KEY=test-key
-                DEEPSEEK_MODEL=deepseek-chat
+                # OpenAI 兼容模型本地配置
+                REPOPILOT_MODEL_PROVIDER=openai-compatible
+                OPENAI_COMPATIBLE_API_KEY=test-key
+                OPENAI_COMPATIBLE_BASE_URL=https://gateway.example.com/v1
+                OPENAI_COMPATIBLE_MODEL=kimi-k2.5
                 """);
 
         Map<String, String> environment = LocalEnvironmentMapLoader.load(workspaceRoot, Map.of("JAVA_HOME", "/tmp/java"));
 
-        assertEquals("deepseek", environment.get("REPOPILOT_MODEL_PROVIDER"));
-        assertEquals("test-key", environment.get("DEEPSEEK_API_KEY"));
-        assertEquals("deepseek-chat", environment.get("DEEPSEEK_MODEL"));
+        assertEquals("openai-compatible", environment.get("REPOPILOT_MODEL_PROVIDER"));
+        assertEquals("test-key", environment.get("OPENAI_COMPATIBLE_API_KEY"));
+        assertEquals("https://gateway.example.com/v1", environment.get("OPENAI_COMPATIBLE_BASE_URL"));
+        assertEquals("kimi-k2.5", environment.get("OPENAI_COMPATIBLE_MODEL"));
         assertEquals("/tmp/java", environment.get("JAVA_HOME"));
     }
 
@@ -35,16 +37,16 @@ class LocalEnvironmentMapLoaderTest {
     void shouldLetProcessEnvironmentOverrideDotEnvLocalValues() throws Exception {
         Files.writeString(workspaceRoot.resolve(".env.local"), """
                 REPOPILOT_MODEL_PROVIDER=bootstrap
-                DEEPSEEK_API_KEY=file-key
+                OPENAI_COMPATIBLE_API_KEY=file-key
                 """);
 
         Map<String, String> environment = LocalEnvironmentMapLoader.load(workspaceRoot, Map.of(
-                "REPOPILOT_MODEL_PROVIDER", "deepseek",
-                "DEEPSEEK_API_KEY", "process-key"
+                "REPOPILOT_MODEL_PROVIDER", "openai-compatible",
+                "OPENAI_COMPATIBLE_API_KEY", "process-key"
         ));
 
-        assertEquals("deepseek", environment.get("REPOPILOT_MODEL_PROVIDER"));
-        assertEquals("process-key", environment.get("DEEPSEEK_API_KEY"));
+        assertEquals("openai-compatible", environment.get("REPOPILOT_MODEL_PROVIDER"));
+        assertEquals("process-key", environment.get("OPENAI_COMPATIBLE_API_KEY"));
     }
 
     @Test
@@ -59,7 +61,7 @@ class LocalEnvironmentMapLoaderTest {
     @Test
     void shouldRejectMalformedDotEnvLocalLine() throws Exception {
         Files.writeString(workspaceRoot.resolve(".env.local"), """
-                DEEPSEEK_API_KEY=test-key
+                OPENAI_COMPATIBLE_API_KEY=test-key
                 INVALID_LINE
                 """);
 

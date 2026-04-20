@@ -19,40 +19,69 @@ class CliModelConfigTest {
     }
 
     @Test
-    void shouldResolveDeepSeekConfigFromEnvironment() {
+    void shouldResolveOpenAiCompatibleConfigFromEnvironment() {
         CliModelConfig config = CliModelConfig.fromEnvironment(Map.of(
-                "REPOPILOT_MODEL_PROVIDER", "deepseek",
-                "DEEPSEEK_API_KEY", "test-key",
-                "DEEPSEEK_BASE_URL", "https://api.deepseek.com",
-                "DEEPSEEK_MODEL", "deepseek-chat"
+                "REPOPILOT_MODEL_PROVIDER", "openai-compatible",
+                "OPENAI_COMPATIBLE_API_KEY", "test-key",
+                "OPENAI_COMPATIBLE_BASE_URL", "https://gateway.example.com/v1",
+                "OPENAI_COMPATIBLE_MODEL", "kimi-k2.5"
         ));
 
-        assertEquals("deepseek", config.provider());
+        assertEquals("openai-compatible", config.provider());
         assertEquals("test-key", config.apiKey());
-        assertEquals("https://api.deepseek.com", config.baseUrl());
-        assertEquals("deepseek-chat", config.modelName());
+        assertEquals("https://gateway.example.com/v1", config.baseUrl());
+        assertEquals("kimi-k2.5", config.modelName());
     }
 
     @Test
-    void shouldUseDeepSeekDefaultsWhenOptionalFieldsMissing() {
-        CliModelConfig config = CliModelConfig.fromEnvironment(Map.of(
-                "REPOPILOT_MODEL_PROVIDER", "deepseek",
-                "DEEPSEEK_API_KEY", "test-key"
-        ));
-
-        assertEquals("deepseek", config.provider());
-        assertEquals("https://api.deepseek.com", config.baseUrl());
-        assertEquals("deepseek-chat", config.modelName());
-    }
-
-    @Test
-    void shouldRejectDeepSeekProviderWithoutApiKey() {
+    void shouldRejectOpenAiCompatibleProviderWithoutApiKey() {
         IllegalArgumentException exception = assertThrows(
                 IllegalArgumentException.class,
-                () -> CliModelConfig.fromEnvironment(Map.of("REPOPILOT_MODEL_PROVIDER", "deepseek"))
+                () -> CliModelConfig.fromEnvironment(Map.of(
+                        "REPOPILOT_MODEL_PROVIDER", "openai-compatible",
+                        "OPENAI_COMPATIBLE_BASE_URL", "https://gateway.example.com/v1",
+                        "OPENAI_COMPATIBLE_MODEL", "kimi-k2.5"
+                ))
         );
 
-        assertEquals("DEEPSEEK_API_KEY must not be blank when provider=deepseek.", exception.getMessage());
+        assertEquals(
+                "OPENAI_COMPATIBLE_API_KEY must not be blank when provider=openai-compatible.",
+                exception.getMessage()
+        );
+    }
+
+    @Test
+    void shouldRejectOpenAiCompatibleProviderWithoutBaseUrl() {
+        IllegalArgumentException exception = assertThrows(
+                IllegalArgumentException.class,
+                () -> CliModelConfig.fromEnvironment(Map.of(
+                        "REPOPILOT_MODEL_PROVIDER", "openai-compatible",
+                        "OPENAI_COMPATIBLE_API_KEY", "test-key",
+                        "OPENAI_COMPATIBLE_MODEL", "kimi-k2.5"
+                ))
+        );
+
+        assertEquals(
+                "OPENAI_COMPATIBLE_BASE_URL must not be blank when provider=openai-compatible.",
+                exception.getMessage()
+        );
+    }
+
+    @Test
+    void shouldRejectOpenAiCompatibleProviderWithoutModel() {
+        IllegalArgumentException exception = assertThrows(
+                IllegalArgumentException.class,
+                () -> CliModelConfig.fromEnvironment(Map.of(
+                        "REPOPILOT_MODEL_PROVIDER", "openai-compatible",
+                        "OPENAI_COMPATIBLE_API_KEY", "test-key",
+                        "OPENAI_COMPATIBLE_BASE_URL", "https://gateway.example.com/v1"
+                ))
+        );
+
+        assertEquals(
+                "OPENAI_COMPATIBLE_MODEL must not be blank when provider=openai-compatible.",
+                exception.getMessage()
+        );
     }
 
     @Test

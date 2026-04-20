@@ -6,7 +6,7 @@ import java.util.Map;
  * CLI 侧模型配置。
  * 当前阶段只支持两种提供方：
  * 1. bootstrap：继续使用本地确定性假模型
- * 2. deepseek：走真实 DeepSeek 兼容接口
+ * 2. openai-compatible：走真实 OpenAI 兼容接口
  */
 public record CliModelConfig(
         String provider,
@@ -20,14 +20,20 @@ public record CliModelConfig(
 
         return switch (provider) {
             case "bootstrap" -> new CliModelConfig("bootstrap", null, null, null);
-            case "deepseek" -> new CliModelConfig(
-                    "deepseek",
+            case "openai-compatible" -> new CliModelConfig(
+                    "openai-compatible",
                     requireNonBlank(
-                            environment.get("DEEPSEEK_API_KEY"),
-                            "DEEPSEEK_API_KEY must not be blank when provider=deepseek."
+                            environment.get("OPENAI_COMPATIBLE_API_KEY"),
+                            "OPENAI_COMPATIBLE_API_KEY must not be blank when provider=openai-compatible."
                     ),
-                    normalizeOrDefault(environment.get("DEEPSEEK_BASE_URL"), "https://api.deepseek.com"),
-                    normalizeOrDefault(environment.get("DEEPSEEK_MODEL"), "deepseek-chat")
+                    requireNonBlank(
+                            environment.get("OPENAI_COMPATIBLE_BASE_URL"),
+                            "OPENAI_COMPATIBLE_BASE_URL must not be blank when provider=openai-compatible."
+                    ),
+                    requireNonBlank(
+                            environment.get("OPENAI_COMPATIBLE_MODEL"),
+                            "OPENAI_COMPATIBLE_MODEL must not be blank when provider=openai-compatible."
+                    )
             );
             default -> throw new IllegalArgumentException("Unsupported model provider: " + provider);
         };

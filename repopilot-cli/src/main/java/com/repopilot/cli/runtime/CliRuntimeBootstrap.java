@@ -65,7 +65,7 @@ public interface CliRuntimeBootstrap {
     /**
      * 默认 bootstrap 使用当前最小 runtime 组件完成一次本地运行。
      * 当 provider=bootstrap 时，它会走确定性假模型；
-     * 当 provider=deepseek 时，它会走真实模型调用。
+     * 当 provider=openai-compatible 时，它会走真实模型调用。
      */
     final class DefaultCliRuntimeBootstrap implements CliRuntimeBootstrap {
 
@@ -229,7 +229,7 @@ public interface CliRuntimeBootstrap {
 
             return switch (modelConfig.provider()) {
                 case "bootstrap" -> new BootstrapModelAdapter(sessionSummary);
-                case "deepseek" -> new DeepSeekChatModelAdapter(
+                case "openai-compatible" -> new OpenAiCompatibleChatModelAdapter(
                         modelConfig.apiKey(),
                         modelConfig.baseUrl(),
                         modelConfig.modelName(),

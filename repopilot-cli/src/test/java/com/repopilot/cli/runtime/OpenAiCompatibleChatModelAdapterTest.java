@@ -22,7 +22,7 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
-class DeepSeekChatModelAdapterTest {
+class OpenAiCompatibleChatModelAdapterTest {
 
     private HttpServer httpServer;
     private String baseUrl;
@@ -41,7 +41,7 @@ class DeepSeekChatModelAdapterTest {
     }
 
     @Test
-    void shouldCallDeepSeekChatCompletionsApiAndParseFinalAnswer() throws Exception {
+    void shouldCallOpenAiCompatibleChatCompletionsApiAndParseFinalAnswer() throws Exception {
         httpServer.createContext("/chat/completions", exchange -> {
             assertEquals("POST", exchange.getRequestMethod());
             lastAuthorizationHeader = exchange.getRequestHeaders().getFirst("Authorization");
@@ -64,10 +64,10 @@ class DeepSeekChatModelAdapterTest {
         });
         httpServer.start();
 
-        DeepSeekChatModelAdapter adapter = new DeepSeekChatModelAdapter(
+        OpenAiCompatibleChatModelAdapter adapter = new OpenAiCompatibleChatModelAdapter(
                 "test-key",
                 baseUrl,
-                "deepseek-chat",
+                "kimi-k2.5",
                 List.of()
         );
 
@@ -79,7 +79,7 @@ class DeepSeekChatModelAdapterTest {
         FinalModelResponse finalResponse = assertInstanceOf(FinalModelResponse.class, response);
         assertEquals("真实模型回答", finalResponse.message());
         assertEquals("Bearer test-key", lastAuthorizationHeader);
-        assertTrue(lastRequestBody.contains("\"model\":\"deepseek-chat\""));
+        assertTrue(lastRequestBody.contains("\"model\":\"kimi-k2.5\""));
         assertTrue(lastRequestBody.contains("\"role\":\"system\""));
         assertTrue(lastRequestBody.contains("\"content\":\"你是 RepoPilot。\""));
         assertTrue(lastRequestBody.contains("\"role\":\"user\""));
@@ -119,10 +119,10 @@ class DeepSeekChatModelAdapterTest {
         });
         httpServer.start();
 
-        DeepSeekChatModelAdapter adapter = new DeepSeekChatModelAdapter(
+        OpenAiCompatibleChatModelAdapter adapter = new OpenAiCompatibleChatModelAdapter(
                 "test-key",
                 baseUrl,
-                "deepseek-chat",
+                "kimi-k2.5",
                 List.of(new ToolDefinition(
                         "activate_skill",
                         "按名称激活单个 Skill",
@@ -173,10 +173,10 @@ class DeepSeekChatModelAdapterTest {
         });
         httpServer.start();
 
-        DeepSeekChatModelAdapter adapter = new DeepSeekChatModelAdapter(
+        OpenAiCompatibleChatModelAdapter adapter = new OpenAiCompatibleChatModelAdapter(
                 "test-key",
                 baseUrl,
-                "deepseek-chat",
+                "kimi-k2.5",
                 List.of(new ToolDefinition(
                         "read_file",
                         "读取文件",
@@ -229,10 +229,10 @@ class DeepSeekChatModelAdapterTest {
         });
         httpServer.start();
 
-        DeepSeekChatModelAdapter adapter = new DeepSeekChatModelAdapter(
+        OpenAiCompatibleChatModelAdapter adapter = new OpenAiCompatibleChatModelAdapter(
                 "test-key",
                 baseUrl,
-                "deepseek-chat",
+                "kimi-k2.5",
                 List.of()
         );
 
@@ -289,7 +289,7 @@ class DeepSeekChatModelAdapterTest {
     }
 
     @Test
-    void shouldFailFastWhenDeepSeekApiReturnsNonSuccessStatus() throws Exception {
+    void shouldFailFastWhenOpenAiCompatibleApiReturnsNonSuccessStatus() throws Exception {
         httpServer.createContext("/chat/completions", exchange -> {
             respondJson(exchange, 401, """
                     {
@@ -301,10 +301,10 @@ class DeepSeekChatModelAdapterTest {
         });
         httpServer.start();
 
-        DeepSeekChatModelAdapter adapter = new DeepSeekChatModelAdapter(
+        OpenAiCompatibleChatModelAdapter adapter = new OpenAiCompatibleChatModelAdapter(
                 "bad-key",
                 baseUrl,
-                "deepseek-chat",
+                "kimi-k2.5",
                 List.of()
         );
 
@@ -313,7 +313,7 @@ class DeepSeekChatModelAdapterTest {
                 () -> adapter.next(List.of(new ConversationMessage(MessageRole.USER, "hello")))
         );
 
-        assertTrue(exception.getMessage().contains("DeepSeek API request failed with status 401"));
+        assertTrue(exception.getMessage().contains("OpenAI-compatible API request failed with status 401"));
         assertTrue(exception.getMessage().contains("Authentication Fails"));
     }
 

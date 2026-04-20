@@ -23,14 +23,14 @@ import java.util.Map;
 import java.util.Objects;
 
 /**
- * DeepSeek 非流式聊天模型适配器。
+ * OpenAI 兼容非流式聊天模型适配器。
  * 当前版本只覆盖最小真实主链路：
  * 1. 把 RepoPilot 消息映射成 OpenAI 兼容 messages
- * 2. 调用 DeepSeek `/chat/completions`
+ * 2. 调用 OpenAI 兼容 `/chat/completions`
  * 3. 解析 assistant 文本回答或 `tool_calls`
  * 4. 在下一轮把 `assistant(tool_calls) -> tool(tool_call_id)` 正确回注给模型
  */
-public final class DeepSeekChatModelAdapter implements ModelAdapter {
+public final class OpenAiCompatibleChatModelAdapter implements ModelAdapter {
 
     private final String apiKey;
     private final String baseUrl;
@@ -39,7 +39,7 @@ public final class DeepSeekChatModelAdapter implements ModelAdapter {
     private final HttpClient httpClient;
     private final ObjectMapper objectMapper;
 
-    public DeepSeekChatModelAdapter(
+    public OpenAiCompatibleChatModelAdapter(
             String apiKey,
             String baseUrl,
             String modelName,
@@ -55,7 +55,7 @@ public final class DeepSeekChatModelAdapter implements ModelAdapter {
         );
     }
 
-    DeepSeekChatModelAdapter(
+    OpenAiCompatibleChatModelAdapter(
             String apiKey,
             String baseUrl,
             String modelName,
@@ -86,10 +86,13 @@ public final class DeepSeekChatModelAdapter implements ModelAdapter {
             HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
             return parseResponse(response);
         } catch (IOException exception) {
-            throw new IllegalStateException("Failed to call DeepSeek API: " + exception.getMessage(), exception);
+            throw new IllegalStateException(
+                    "Failed to call OpenAI-compatible API: " + exception.getMessage(),
+                    exception
+            );
         } catch (InterruptedException exception) {
             Thread.currentThread().interrupt();
-            throw new IllegalStateException("DeepSeek API call was interrupted.", exception);
+            throw new IllegalStateException("OpenAI-compatible API call was interrupted.", exception);
         }
     }
 
@@ -111,7 +114,7 @@ public final class DeepSeekChatModelAdapter implements ModelAdapter {
             Objects.requireNonNull(message, "message must not be null.");
 
             // 这里逐条做显式 role 映射，
-            // 让“RepoPilot 内部消息角色”和“DeepSeek 兼容接口角色”之间的边界保持可审计。
+            // 让“RepoPilot 内部消息角色”和“OpenAI 兼容接口角色”之间的边界保持可审计。
             Map<String, Object> apiMessage = new LinkedHashMap<>();
 
             switch (message.role()) {
@@ -120,7 +123,7 @@ public final class DeepSeekChatModelAdapter implements ModelAdapter {
                     apiMessage.put("content", requireNonBlank(message.content(), "message content must not be blank."));
                 }
                 case WORKING_MEMORY, CONTEXT_SUMMARY -> {
-                    // DeepSeek 兼容接口并不认识 RepoPilot 的内部消息角色，
+                    // OpenAI 兼容接口并不认识 RepoPilot 的内部消息角色，
                     // 所以这里显式把结构化上下文映射成 system 消息。
                     // 这样它们仍然保持“运行时注入上下文”的语义，
                     // 同时不会被伪装成用户真实输入。
@@ -194,7 +197,7 @@ public final class DeepSeekChatModelAdapter implements ModelAdapter {
     private ModelResponse parseResponse(HttpResponse<String> response) throws IOException {
         if (response.statusCode() < 200 || response.statusCode() >= 300) {
             throw new IllegalStateException(
-                    "DeepSeek API request failed with status %d: %s".formatted(
+                    "OpenAI-compatible API request failed with status %d: %s".formatted(
                             response.statusCode(),
                             response.body()
                     )
@@ -209,7 +212,7 @@ public final class DeepSeekChatModelAdapter implements ModelAdapter {
 
         JsonNode contentNode = messageNode.path("content");
         if (!contentNode.isTextual() || contentNode.asText().isBlank()) {
-            throw new IllegalStateException("DeepSeek API response does not contain assistant content.");
+            throw new IllegalStateException("OpenAI-compatible API response does not contain assistant content.");
         }
 
         return new FinalModelResponse(contentNode.asText().strip());
@@ -257,7 +260,7 @@ public final class DeepSeekChatModelAdapter implements ModelAdapter {
     private String readRequiredText(JsonNode node, String fieldName) {
         JsonNode fieldNode = node.path(fieldName);
         if (!fieldNode.isTextual() || fieldNode.asText().isBlank()) {
-            throw new IllegalStateException("DeepSeek tool call field is missing: " + fieldName);
+            throw new IllegalStateException("OpenAI-compatible tool call field is missing: " + fieldName);
         }
         return fieldNode.asText().strip();
     }

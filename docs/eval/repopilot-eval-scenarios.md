@@ -19,6 +19,10 @@ mvn -pl repopilot-cli -am test
 真实模型 E2E 建议显式设置：
 
 ```bash
+REPOPILOT_MODEL_PROVIDER=openai-compatible
+OPENAI_COMPATIBLE_API_KEY=your-api-key
+OPENAI_COMPATIBLE_BASE_URL=https://your-openai-compatible-endpoint/v1
+OPENAI_COMPATIBLE_MODEL=your-model-id
 REPOPILOT_MAX_STEPS=16
 ```
 
