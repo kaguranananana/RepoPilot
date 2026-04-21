@@ -1,6 +1,7 @@
 package com.repopilot.cli.interactive;
 
 import com.repopilot.cli.runtime.CliRuntimeBootstrap;
+import com.repopilot.cli.runtime.CliContextCompactionFactory;
 import com.repopilot.core.agent.AgentLoop;
 import com.repopilot.core.agent.AgentLoopObserver;
 import com.repopilot.core.agent.AgentLoopRequest;
@@ -159,9 +160,16 @@ public final class DefaultInteractiveRuntimeRunner implements InteractiveRuntime
                 new DiffReviewService(workspaceRoot),
                 toolApprovalHandler
         );
-        AgentLoop agentLoop = new AgentLoop(governedToolExecutor, observer, tracePublisher);
+        List<ToolDefinition> effectiveTools = resolveEffectiveTools(refreshedHistory, toolRegistry, runMode);
+        AgentLoop agentLoop = new AgentLoop(
+                governedToolExecutor,
+                observer,
+                tracePublisher,
+                CliContextCompactionFactory.createContextCompactor(),
+                CliContextCompactionFactory.createInputTokenEstimator(effectiveTools)
+        );
         AgentLoopResult result = agentLoop.run(new AgentLoopRequest(
-                modelAdapterFactory.create(sessionSummary, resolveEffectiveTools(refreshedHistory, toolRegistry, runMode)),
+                modelAdapterFactory.create(sessionSummary, effectiveTools),
                 messages,
                 maxSteps,
                 runMode

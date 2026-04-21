@@ -17,6 +17,7 @@ import com.repopilot.core.tool.ToolDefinition;
 import com.repopilot.core.tool.ToolRegistry;
 import com.repopilot.core.tool.builtin.BuiltinToolRegistrar;
 import com.repopilot.core.tool.governance.GovernedToolExecutor;
+import com.repopilot.cli.runtime.ModelInputTokenEstimator;
 import com.repopilot.protocol.trace.TraceEventType;
 import java.io.IOException;
 import java.nio.file.Files;

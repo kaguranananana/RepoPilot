@@ -1,4 +1,4 @@
-package com.repopilot.cli.eval;
+package com.repopilot.cli.runtime;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;

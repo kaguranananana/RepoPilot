@@ -1,6 +1,7 @@
 package com.repopilot.cli.runtime;
 
 import com.repopilot.core.agent.AgentLoop;
+import com.repopilot.core.agent.AgentLoopObserver;
 import com.repopilot.core.agent.AgentLoopRequest;
 import com.repopilot.core.agent.AgentLoopResult;
 import com.repopilot.core.model.ConversationMessage;
@@ -135,7 +136,13 @@ public interface CliRuntimeBootstrap {
 
             // 最后把拼好的消息列表送进 AgentLoop，
             // 让 CLI 到 core 的一次最小调用真正走过统一运行时入口。
-            AgentLoop agentLoop = new AgentLoop(governedToolExecutor, tracePublisher);
+            AgentLoop agentLoop = new AgentLoop(
+                    governedToolExecutor,
+                    AgentLoopObserver.noop(),
+                    tracePublisher,
+                    CliContextCompactionFactory.createContextCompactor(),
+                    CliContextCompactionFactory.createInputTokenEstimator(toolRegistry.list())
+            );
             AgentLoopResult result = agentLoop.run(new AgentLoopRequest(
                     modelAdapterFactory.create(sessionSummary, toolRegistry.list()),
                     buildMessages(promptBoundary, safePrompt),

@@ -1,4 +1,4 @@
-package com.repopilot.cli.eval;
+package com.repopilot.cli.runtime;
 
 import com.repopilot.core.model.ConversationMessage;
 import com.repopilot.core.tool.ToolDefinition;

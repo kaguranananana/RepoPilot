@@ -17,6 +17,7 @@ import com.repopilot.core.tool.ToolDefinition;
 import com.repopilot.core.skill.SkillLoader;
 import com.repopilot.protocol.session.SessionStatus;
 import com.repopilot.protocol.session.SessionSummary;
+import com.repopilot.protocol.trace.TraceEventType;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Clock;
@@ -212,6 +213,32 @@ class InteractiveRuntimeRunnerTest {
         assertFalse(availableToolSection.contains("run_command:"));
     }
 
+    @Test
+    void shouldUseTokenBudgetCompactionInInteractiveRuntime() {
+        RecordingTracePublisher tracePublisher = new RecordingTracePublisher();
+        DefaultInteractiveRuntimeRunner runtimeRunner = new DefaultInteractiveRuntimeRunner(
+                Clock.fixed(Instant.parse("2026-04-16T07:00:00Z"), ZoneOffset.UTC),
+                new RecordingModelAdapterFactory(),
+                8
+        );
+
+        runtimeRunner.runTurn(
+                session(),
+                runtimeRunner.createInitialHistory(session()),
+                longPrompt(),
+                AgentLoopObserver.noop(),
+                tracePublisher
+        );
+
+        assertEquals(
+                List.of("TOKEN_BUDGET"),
+                tracePublisher.events.stream()
+                        .filter(event -> event.type() == TraceEventType.CONTEXT_COMPACTION_COMPLETED)
+                        .map(event -> event.metadata().get("trigger"))
+                        .toList()
+        );
+    }
+
     private static SessionSummary session() {
         return new SessionSummary(
                 "session-001",
@@ -244,6 +271,20 @@ class InteractiveRuntimeRunnerTest {
                 }
             };
         }
+    }
+
+    private static final class RecordingTracePublisher implements TracePublisher {
+
+        private final List<TraceEvent> events = new ArrayList<>();
+
+        @Override
+        public void publish(TraceEvent event) {
+            events.add(event);
+        }
+    }
+
+    private String longPrompt() {
+        return "分析下面的长上下文：" + " token-budget".repeat(20_000);
     }
 
     private void writeSkill(Path skillRoot, String frontMatter, String body) throws Exception {

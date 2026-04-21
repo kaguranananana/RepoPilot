@@ -12,13 +12,16 @@ import com.repopilot.core.model.ToolCall;
 import com.repopilot.core.model.ToolCallModelResponse;
 import com.repopilot.core.skill.SkillLoader;
 import com.repopilot.core.skill.SkillSummary;
+import com.repopilot.core.trace.TracePublisher;
 import com.repopilot.protocol.session.SessionStatus;
 import com.repopilot.protocol.session.SessionSummary;
+import com.repopilot.protocol.trace.TraceEventType;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneOffset;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import org.junit.jupiter.api.Test;
@@ -139,6 +142,37 @@ class CliRuntimeBootstrapTest {
         assertEquals("多步回合完成", answer);
     }
 
+    @Test
+    void shouldUseTokenBudgetCompactionInSingleRunRuntime() {
+        RecordingTracePublisher tracePublisher = new RecordingTracePublisher();
+        CliRuntimeBootstrap bootstrap = new CliRuntimeBootstrap.DefaultCliRuntimeBootstrap(
+                Clock.fixed(Instant.parse("2026-04-16T07:00:00Z"), ZoneOffset.UTC),
+                new SystemPromptBuilder(),
+                (sessionSummary, availableTools) -> new CliRuntimeBootstrap.BootstrapModelAdapter(sessionSummary)
+        );
+
+        bootstrap.run(
+                new SessionSummary(
+                        "session-004",
+                        "workspace-001",
+                        "cli",
+                        SessionStatus.CREATED,
+                        Instant.parse("2026-04-16T06:59:00Z"),
+                        Instant.parse("2026-04-16T06:59:00Z")
+                ),
+                longPrompt(),
+                tracePublisher
+        );
+
+        assertEquals(
+                List.of("TOKEN_BUDGET"),
+                tracePublisher.events.stream()
+                        .filter(event -> event.type() == TraceEventType.CONTEXT_COMPACTION_COMPLETED)
+                        .map(event -> event.metadata().get("trigger"))
+                        .toList()
+        );
+    }
+
     private static final class CapturingSystemPromptBuilder extends SystemPromptBuilder {
 
         private DynamicPromptContext capturedContext;
@@ -165,6 +199,20 @@ class CliRuntimeBootstrapTest {
             cursor += 1;
             return response;
         }
+    }
+
+    private static final class RecordingTracePublisher implements TracePublisher {
+
+        private final List<TraceEvent> events = new ArrayList<>();
+
+        @Override
+        public void publish(TraceEvent event) {
+            events.add(event);
+        }
+    }
+
+    private String longPrompt() {
+        return "分析下面的长上下文：" + " token-budget".repeat(20_000);
     }
 
     private void writeSkill(Path skillRoot, String frontMatter) throws Exception {

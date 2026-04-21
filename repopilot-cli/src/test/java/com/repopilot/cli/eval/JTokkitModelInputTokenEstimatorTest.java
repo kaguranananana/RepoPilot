@@ -3,6 +3,7 @@ package com.repopilot.cli.eval;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import com.repopilot.cli.runtime.JTokkitModelInputTokenEstimator;
 import com.repopilot.core.model.ConversationMessage;
 import com.repopilot.core.model.MessageRole;
 import java.util.List;
