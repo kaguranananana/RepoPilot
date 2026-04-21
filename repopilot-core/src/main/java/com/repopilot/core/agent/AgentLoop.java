@@ -299,7 +299,7 @@ public class AgentLoop {
         boolean structuredSummaryApplied =
                 shouldApplyStructuredSummary(ruleCompactionResult.messages(), decision);
         int compactedCount = structuredSummaryApplied
-                ? highFidelityCount
+                ? contextCompactor.estimateStructuredSummaryArchivedMessageCount(messages)
                 : ruleCompactionResult.compactedHighFidelityMessageCount();
 
         publishContextCompactionStarted(stepNumber, highFidelityCount, compactedCount, decision);

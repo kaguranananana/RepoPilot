@@ -141,7 +141,11 @@ public final class ContextCostEvalRunner {
                     traceCollector.compactionCount(),
                     traceCollector.tokenBudgetCompactionCount(),
                     traceCollector.microcompactedToolResultCount(),
-                    evaluateFactRetention(scenario.expectedFacts(), observer.compactedPromptMessages())
+                    evaluateFactRetention(
+                            scenario.expectedFacts(),
+                            observer.latestPromptMessages(),
+                            observer.compactedPromptMessages()
+                    )
             );
         } catch (Exception exception) {
             throw new IllegalStateException(
@@ -245,6 +249,7 @@ public final class ContextCostEvalRunner {
 
     private FactRetentionResult evaluateFactRetention(
             List<ContextCostFactExpectation> expectedFacts,
+            List<ConversationMessage> latestPromptMessages,
             List<List<ConversationMessage>> compactedPromptMessages
     ) {
         List<ContextCostFactExpectation> safeExpectedFacts =
@@ -252,9 +257,10 @@ public final class ContextCostEvalRunner {
         if (safeExpectedFacts.isEmpty()) {
             return new FactRetentionResult(0, 0);
         }
-        String retainedPromptText = compactedPromptMessages.isEmpty()
-                ? ""
-                : renderPromptText(compactedPromptMessages.get(compactedPromptMessages.size() - 1));
+        List<ConversationMessage> referencePromptMessages = compactedPromptMessages.isEmpty()
+                ? List.copyOf(Objects.requireNonNull(latestPromptMessages, "latestPromptMessages must not be null."))
+                : compactedPromptMessages.get(compactedPromptMessages.size() - 1);
+        String retainedPromptText = renderPromptText(referencePromptMessages);
         int retainedFacts = 0;
         for (ContextCostFactExpectation expectedFact : safeExpectedFacts) {
             if (retainedPromptText.contains(expectedFact.requiredText())) {
@@ -383,6 +389,7 @@ public final class ContextCostEvalRunner {
         private final List<Integer> estimatedInputTokens = new ArrayList<>();
         private final List<Integer> realPromptTokens = new ArrayList<>();
         private final List<List<ConversationMessage>> compactedPromptMessages = new ArrayList<>();
+        private List<ConversationMessage> latestPromptMessages = List.of();
 
         private TokenAccountingObserver(ModelInputTokenEstimator tokenEstimator, List<ToolDefinition> availableTools) {
             this.tokenEstimator = tokenEstimator;
@@ -396,6 +403,7 @@ public final class ContextCostEvalRunner {
                 throw new IllegalStateException("本地 token 估算结果不能为负数。");
             }
             estimatedInputTokens.add(inputTokens);
+            latestPromptMessages = List.copyOf(messages);
             if (containsCompactedContext(messages)) {
                 compactedPromptMessages.add(List.copyOf(messages));
             }
@@ -428,6 +436,10 @@ public final class ContextCostEvalRunner {
 
         List<List<ConversationMessage>> compactedPromptMessages() {
             return List.copyOf(compactedPromptMessages);
+        }
+
+        List<ConversationMessage> latestPromptMessages() {
+            return latestPromptMessages;
         }
 
         private boolean containsCompactedContext(List<ConversationMessage> messages) {

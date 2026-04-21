@@ -115,7 +115,9 @@ class ContextCostEvalRunnerTest {
 
         ContextCostEvalResult.ScenarioComparison comparison = result.scenarioComparisons().get(0);
         assertEquals(2, comparison.candidateTokenBudgetCompactionCount());
-        assertEquals(0, comparison.candidateMicrocompactedToolResultCount());
+        // 结构化压缩现在会保留最近高保真窗口，
+        // 因此窗口里更旧的一条工具结果会被 microcompact，而不是整段直接丢掉。
+        assertEquals(1, comparison.candidateMicrocompactedToolResultCount());
         assertEquals(0, comparison.baselineTokenBudgetCompactionCount());
         assertEquals(0, comparison.baselineMicrocompactedToolResultCount());
     }
@@ -142,6 +144,28 @@ class ContextCostEvalRunnerTest {
         assertEquals(3, result.summary().expectedFactCount());
         assertEquals(3, result.summary().candidateRetainedFactCount());
         assertEquals(1.0, result.summary().candidateFactRetentionRate());
+    }
+
+    @Test
+    void shouldCalculateFactRetentionFromLatestPromptWhenCompactionDoesNotTrigger() {
+        ContextCostEvalRunner runner = new ContextCostEvalRunner(
+                tempRoot.resolve("no-compaction-fact-retention-workspaces"),
+                Clock.fixed(Instant.parse("2026-04-21T01:00:00Z"), ZoneOffset.UTC),
+                (messages, tools) -> messages.stream().mapToInt(message -> message.content().length()).sum()
+        );
+
+        ContextCostEvalResult result = runner.run(
+                ContextCostMeasurementKind.ESTIMATED_INPUT,
+                "test-estimator",
+                0.0,
+                List.of(noCompactionFactScenario())
+        );
+
+        ContextCostEvalResult.ScenarioComparison comparison = result.scenarioComparisons().get(0);
+        assertEquals(0, comparison.candidateCompactionCount());
+        assertEquals(2, comparison.expectedFactCount());
+        assertEquals(2, comparison.candidateRetainedFactCount());
+        assertEquals(1.0, comparison.candidateFactRetentionRate());
     }
 
     private ContextCostScenario longReadScenario(boolean includeUsage) {
@@ -191,6 +215,30 @@ class ContextCostEvalRunnerTest {
                         new ContextCostFactExpectation("goal", "用户目标", "连续读取两个文件后汇报。"),
                         new ContextCostFactExpectation("file-a", "已读文件 A", "notes/a.txt"),
                         new ContextCostFactExpectation("file-b", "已读文件 B", "notes/b.txt")
+                )
+        );
+    }
+
+    private ContextCostScenario noCompactionFactScenario() {
+        return new ContextCostScenario(
+                "no-compaction-facts",
+                "未触发压缩的事实保留率",
+                "请读取 notes/a.txt 后汇报。",
+                3,
+                new ContextCompactionPolicy(10_000, 9_999, 10),
+                new ContextCompactionPolicy(10_000, 9_999, 10),
+                workspace -> {
+                    Files.createDirectories(workspace.resolve("notes"));
+                    Files.writeString(workspace.resolve("notes/a.txt"), "A".repeat(256));
+                },
+                (workspace, strategy) -> scriptedModel(List.of(
+                        tool("call-a", "read_file", Map.of("path", "notes/a.txt")),
+                        new FinalModelResponse("已读取 notes/a.txt")
+                )),
+                execution -> assertTrue(execution.agentLoopResult().finalAnswer().contains("notes/a.txt")),
+                List.of(
+                        new ContextCostFactExpectation("goal", "用户目标", "请读取 notes/a.txt 后汇报。"),
+                        new ContextCostFactExpectation("file-a", "已读文件 A", "notes/a.txt")
                 )
         );
     }

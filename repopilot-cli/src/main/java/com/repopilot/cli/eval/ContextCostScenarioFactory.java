@@ -4,6 +4,7 @@ import com.repopilot.cli.runtime.CliModelConfig;
 import com.repopilot.cli.runtime.OpenAiCompatibleChatModelAdapter;
 import com.repopilot.core.context.ContextCompactionPolicy;
 import com.repopilot.core.model.FinalModelResponse;
+import com.repopilot.core.model.MessageRole;
 import com.repopilot.core.model.ModelAdapter;
 import com.repopilot.core.model.ModelResponse;
 import com.repopilot.core.model.ToolCall;
@@ -38,7 +39,11 @@ public final class ContextCostScenarioFactory {
 
     public static List<ContextCostScenario> defaultRealUsageScenarios(CliModelConfig modelConfig) {
         CliModelConfig safeModelConfig = requireRealModelConfig(modelConfig);
-        return List.of(realLongFileReadScenario(safeModelConfig));
+        return List.of(
+                realLongFileReadScenario(safeModelConfig),
+                realSearchReadBatchScenario(safeModelConfig),
+                realSpecReviewReadScenario(safeModelConfig)
+        );
     }
 
     private static ContextCostScenario scriptedLongFileReadScenario() {
@@ -74,13 +79,69 @@ public final class ContextCostScenarioFactory {
                         2) 不要搜索，不要运行命令，不要修改文件；
                         3) 最后用一句话汇报已读取 6 个文件。
                         """,
-                12,
+                20,
                 NO_COMPACTION_POLICY,
                 STRUCTURED_COMPACTION_POLICY,
                 ContextCostScenarioFactory::writeLongReadFixture,
                 (workspace, strategy) -> createRealModelAdapter(modelConfig, workspace),
                 execution -> requireFinalAnswerContains(execution, "6"),
                 longReadExpectedFacts("请严格按顺序完成：")
+        );
+    }
+
+    private static ContextCostScenario realSearchReadBatchScenario(CliModelConfig modelConfig) {
+        return new ContextCostScenario(
+                "batch-read",
+                "真实模型批量读取",
+                """
+                        请严格按顺序完成：
+                        1) 依次使用 read_file 读取 notes/alpha.md、notes/beta.md、notes/gamma.md；
+                        2) 不要搜索，不要运行命令，不要修改文件；
+                        3) 最后用一句话汇报已读取 3 个批量文档。
+                        """,
+                18,
+                NO_COMPACTION_POLICY,
+                STRUCTURED_COMPACTION_POLICY,
+                ContextCostScenarioFactory::writeSearchReadBatchFixture,
+                (workspace, strategy) -> createRealModelAdapter(modelConfig, workspace),
+                execution -> {
+                    // 这个场景只验证固定三文件的连续读取，
+                    // 尽量减少工具选择分岔带来的模型波动，
+                    // 让观测重点集中在压缩前后的 token 差异。
+                    requireToolMessage(execution, "# Alpha Batch");
+                    requireToolMessage(execution, "# Beta Batch");
+                    requireToolMessage(execution, "# Gamma Batch");
+                    requireNonBlankFinalAnswer(execution);
+                },
+                searchReadBatchExpectedFacts()
+        );
+    }
+
+    private static ContextCostScenario realSpecReviewReadScenario(CliModelConfig modelConfig) {
+        return new ContextCostScenario(
+                "spec-review-read",
+                "真实模型规格阅读",
+                """
+                        请严格按顺序完成：
+                        1) 依次使用 read_file 读取 specs/runtime.md、specs/context.md、specs/skills.md；
+                        2) 不要搜索，不要运行命令，不要修改文件；
+                        3) 最后用一句话汇报已读取 3 份说明文档。
+                        """,
+                18,
+                NO_COMPACTION_POLICY,
+                STRUCTURED_COMPACTION_POLICY,
+                ContextCostScenarioFactory::writeSpecReviewFixture,
+                (workspace, strategy) -> createRealModelAdapter(modelConfig, workspace),
+                execution -> {
+                    // 这个场景不依赖搜索或修改能力，
+                    // 只验证长文档连续读取是否完成，
+                    // 便于把观测重点聚焦到上下文压缩收益本身。
+                    requireToolMessage(execution, "# Runtime Spec");
+                    requireToolMessage(execution, "# Context Spec");
+                    requireToolMessage(execution, "# Skills Spec");
+                    requireNonBlankFinalAnswer(execution);
+                },
+                specReviewExpectedFacts()
         );
     }
 
@@ -96,6 +157,25 @@ public final class ContextCostScenarioFactory {
         );
     }
 
+    private static List<ContextCostFactExpectation> searchReadBatchExpectedFacts() {
+        return List.of(
+                new ContextCostFactExpectation("alpha", "批量文档 Alpha", "notes/alpha.md"),
+                new ContextCostFactExpectation("beta", "批量文档 Beta", "notes/beta.md"),
+                new ContextCostFactExpectation("gamma", "批量文档 Gamma", "notes/gamma.md")
+        );
+    }
+
+    private static List<ContextCostFactExpectation> specReviewExpectedFacts() {
+        return List.of(
+                new ContextCostFactExpectation("runtime", "运行时规格", "# Runtime Spec"),
+                new ContextCostFactExpectation("context", "上下文规格", "# Context Spec"),
+                new ContextCostFactExpectation("skills", "技能规格", "# Skills Spec"),
+                new ContextCostFactExpectation("runtime-file", "运行时规格文件", "specs/runtime.md"),
+                new ContextCostFactExpectation("context-file", "上下文规格文件", "specs/context.md"),
+                new ContextCostFactExpectation("skills-file", "技能规格文件", "specs/skills.md")
+        );
+    }
+
     private static void writeLongReadFixture(Path workspace) throws IOException {
         Files.createDirectories(workspace.resolve("notes"));
         Files.writeString(workspace.resolve("notes/a.txt"), "A".repeat(3_000));
@@ -104,6 +184,65 @@ public final class ContextCostScenarioFactory {
         Files.writeString(workspace.resolve("notes/d.txt"), "D".repeat(3_000));
         Files.writeString(workspace.resolve("notes/e.txt"), "E".repeat(3_000));
         Files.writeString(workspace.resolve("notes/f.txt"), "F".repeat(3_000));
+    }
+
+    private static void writeSearchReadBatchFixture(Path workspace) throws IOException {
+        Files.createDirectories(workspace.resolve("notes"));
+        writeLargeMarkdown(
+                workspace.resolve("notes/alpha.md"),
+                "# Alpha Batch",
+                "context-batch-marker-20260421",
+                "ALPHA"
+        );
+        writeLargeMarkdown(
+                workspace.resolve("notes/beta.md"),
+                "# Beta Batch",
+                "context-batch-marker-20260421",
+                "BETA"
+        );
+        writeLargeMarkdown(
+                workspace.resolve("notes/gamma.md"),
+                "# Gamma Batch",
+                "context-batch-marker-20260421",
+                "GAMMA"
+        );
+    }
+
+    private static void writeSpecReviewFixture(Path workspace) throws IOException {
+        Files.createDirectories(workspace.resolve("specs"));
+        writeLargeMarkdown(
+                workspace.resolve("specs/runtime.md"),
+                "# Runtime Spec",
+                "runtime-mode=execute",
+                "RUNTIME"
+        );
+        writeLargeMarkdown(
+                workspace.resolve("specs/context.md"),
+                "# Context Spec",
+                "context-layer=summary",
+                "CONTEXT"
+        );
+        writeLargeMarkdown(
+                workspace.resolve("specs/skills.md"),
+                "# Skills Spec",
+                "skill-mode=allowed-tools",
+                "SKILLS"
+        );
+    }
+
+    private static void writeLargeMarkdown(
+            Path filePath,
+            String title,
+            String marker,
+            String repeatedToken
+    ) throws IOException {
+        // 这里把正文长度控制在“足以触发压缩、但不会把真实评测成本拉得过高”的区间。
+        String content = title
+                + "\n"
+                + "marker=" + marker + "\n"
+                + (repeatedToken + " ").repeat(500)
+                + "\n";
+        Files.writeString(filePath, content);
     }
 
     private static ToolCallModelResponse readTool(String id, String path) {
@@ -133,6 +272,22 @@ public final class ContextCostScenarioFactory {
         String finalAnswer = execution.agentLoopResult().finalAnswer();
         if (finalAnswer == null || !finalAnswer.contains(expectedText)) {
             throw new IllegalStateException("最终回答不符合预期: " + finalAnswer);
+        }
+    }
+
+    private static void requireNonBlankFinalAnswer(ContextCostScenario.ScenarioExecution execution) {
+        String finalAnswer = execution.agentLoopResult().finalAnswer();
+        if (finalAnswer == null || finalAnswer.isBlank()) {
+            throw new IllegalStateException("最终回答不能为空。");
+        }
+    }
+
+    private static void requireToolMessage(ContextCostScenario.ScenarioExecution execution, String expectedText) {
+        boolean found = execution.agentLoopResult().messages().stream()
+                .filter(message -> message.role() == MessageRole.TOOL)
+                .anyMatch(message -> message.content().contains(expectedText));
+        if (!found) {
+            throw new IllegalStateException("未观察到工具消息包含: " + expectedText);
         }
     }
 

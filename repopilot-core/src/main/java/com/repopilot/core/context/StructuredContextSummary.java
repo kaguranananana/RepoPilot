@@ -1,6 +1,7 @@
 package com.repopilot.core.context;
 
 import java.util.List;
+import java.util.LinkedHashSet;
 import java.util.Objects;
 
 /**
@@ -46,19 +47,20 @@ public record StructuredContextSummary(
     public WorkingMemorySnapshot toWorkingMemorySnapshot(WorkingMemorySnapshot previousSnapshot) {
         Objects.requireNonNull(previousSnapshot, "previousSnapshot must not be null.");
         // 模型摘要路径已经用结构化字段替代旧高保真历史，
-        // 因此最终 working_memory 也必须来自摘要字段，避免长 prompt 从旧 task_goal 泄漏回来。
+        // 但已有的稳定状态仍然要保留，
+        // 否则压缩后会把用户约束、最近工具结果、阻塞点等执行状态一并清空。
         return new WorkingMemorySnapshot(
                 userGoal,
-                importantFindings,
-                List.of(),
-                List.of(),
-                touchedFiles,
+                mergeOrdered(previousSnapshot.confirmedFacts(), importantFindings),
+                previousSnapshot.recentToolResults(),
+                mergeOrdered(previousSnapshot.currentBlockers(), failedCommands),
+                previousSnapshot.artifactReferences(),
                 renderNextAction(),
-                touchedFiles,
-                List.of(),
-                failedCommands,
-                List.of(),
-                decisions,
+                mergeOrdered(previousSnapshot.keyFilesRead(), touchedFiles),
+                previousSnapshot.importantToolCalls(),
+                mergeOrdered(previousSnapshot.toolErrors(), failedCommands),
+                previousSnapshot.userConstraints(),
+                previousSnapshot.confirmedOutcomes(),
                 previousSnapshot.compactionCount(),
                 previousSnapshot.archivedMessageCount(),
                 previousSnapshot.resumeCheckpointId(),
@@ -71,6 +73,13 @@ public record StructuredContextSummary(
             return "继续推进当前任务";
         }
         return nextActions.get(0);
+    }
+
+    private static List<String> mergeOrdered(List<String> baseValues, List<String> newValues) {
+        LinkedHashSet<String> merged = new LinkedHashSet<>();
+        merged.addAll(baseValues);
+        merged.addAll(newValues);
+        return List.copyOf(merged);
     }
 
     private static void appendSingleLine(StringBuilder builder, String label, String value) {

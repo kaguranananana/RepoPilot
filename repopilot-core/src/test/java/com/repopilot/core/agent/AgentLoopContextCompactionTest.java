@@ -154,6 +154,39 @@ class AgentLoopContextCompactionTest {
         assertEquals("1", completed.metadata().get("compactedMessageCount"));
     }
 
+    @Test
+    void shouldRecordActualArchivedMessageCountWhenStructuredSummaryKeepsRecentWindow() {
+        ToolRegistry toolRegistry = new ToolRegistry();
+        toolRegistry.register("echo", "回显输入文本", arguments -> ToolExecutionResult.success(arguments.get("text")));
+
+        RecordingStructuredSummaryGenerator summaryGenerator = new RecordingStructuredSummaryGenerator();
+        RecordingModelAdapter modelAdapter = new RecordingModelAdapter(List.of(
+                new ToolCallModelResponse(List.of(new ToolCall("call-1", "echo", Map.of("text", "X".repeat(2_000))))),
+                new FinalModelResponse("完成")
+        ));
+
+        new AgentLoop(
+                toolRegistry,
+                AgentLoopObserver.noop(),
+                new RecordingTracePublisher(),
+                new ContextCompactor(new ContextCompactionPolicy(100, 2, 1, 500, 10, 10)),
+                messages -> messages.stream().anyMatch(message -> message.role() == MessageRole.TOOL) ? 1_000 : 10,
+                summaryGenerator
+        ).run(new AgentLoopRequest(
+                modelAdapter,
+                List.of(new ConversationMessage(MessageRole.USER, "读取长输出并继续")),
+                4
+        ));
+
+        String contextSummary = modelAdapter.calls().get(1).stream()
+                .filter(message -> message.role() == MessageRole.CONTEXT_SUMMARY)
+                .findFirst()
+                .orElseThrow()
+                .content();
+
+        assertTrue(contextSummary.contains("- archived_message_count: 1"));
+    }
+
     private static final class RecordingTracePublisher implements TracePublisher {
 
         private final List<TraceEvent> events = new ArrayList<>();

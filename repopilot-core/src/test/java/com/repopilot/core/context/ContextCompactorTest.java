@@ -201,4 +201,63 @@ class ContextCompactorTest {
         assertFalse(toolMessages.get(0).content().contains("a".repeat(200)));
         assertEquals(secondLongOutput, toolMessages.get(1).content());
     }
+
+    @Test
+    void shouldKeepRecentHighFidelityWindowWhenUsingStructuredSummary() {
+        ContextCompactionPolicy policy = new ContextCompactionPolicy(6, 2, 1);
+        ContextCompactor compactor = new ContextCompactor(policy);
+        WorkingMemorySnapshot snapshot = new WorkingMemorySnapshot(
+                "读取多个长文件",
+                List.of("已完成旧历史摘要"),
+                List.of("read_file(path=notes/b.txt) -> SUCCESS"),
+                List.of(),
+                List.of(),
+                "继续读取剩余文件",
+                List.of("notes/b.txt"),
+                List.of("read_file(path=notes/b.txt)"),
+                List.of(),
+                List.of("不要修改文件"),
+                List.of(),
+                2,
+                4,
+                "compaction-2",
+                "token_budget"
+        );
+        StructuredContextSummary structuredSummary = new StructuredContextSummary(
+                "读取多个长文件",
+                "EXECUTE",
+                "已进入结构化压缩",
+                List.of("notes/b.txt"),
+                List.of("旧历史已归档"),
+                List.of(),
+                List.of("保留最近窗口继续执行"),
+                List.of("继续读取剩余文件")
+        );
+
+        ContextCompactor.CompactionResult result = compactor.compactWithStructuredSummary(List.of(
+                new ConversationMessage(MessageRole.USER, "读取多个长文件"),
+                new ConversationMessage(MessageRole.ASSISTANT, "先读取 notes/a.txt"),
+                ConversationMessage.assistantToolCalls(List.of(new ToolCall(
+                        "call-b",
+                        "read_file",
+                        Map.of("path", "notes/b.txt")
+                ))),
+                ConversationMessage.toolResult("call-b", "[read_file] B"),
+                new ConversationMessage(MessageRole.ASSISTANT, "继续读取 notes/c.txt")
+        ), snapshot, structuredSummary);
+
+        assertEquals(
+                List.of(
+                        MessageRole.WORKING_MEMORY,
+                        MessageRole.CONTEXT_SUMMARY,
+                        MessageRole.ASSISTANT,
+                        MessageRole.TOOL,
+                        MessageRole.ASSISTANT
+                ),
+                result.messages().stream().map(ConversationMessage::role).toList()
+        );
+        assertEquals("call-b", result.messages().get(2).toolCalls().get(0).id());
+        assertEquals("call-b", result.messages().get(3).toolCallId());
+        assertEquals("继续读取 notes/c.txt", result.messages().get(4).content());
+    }
 }

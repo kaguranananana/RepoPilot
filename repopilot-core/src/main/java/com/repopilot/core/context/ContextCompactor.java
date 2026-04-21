@@ -92,31 +92,48 @@ public final class ContextCompactor {
         Objects.requireNonNull(structuredSummary, "structuredSummary must not be null.");
 
         List<ConversationMessage> systemMessages = new ArrayList<>();
-        int highFidelityMessageCount = 0;
+        List<ConversationMessage> highFidelityMessages = new ArrayList<>();
         for (ConversationMessage message : messages) {
             if (message.role() == MessageRole.SYSTEM) {
                 systemMessages.add(message);
                 continue;
             }
             if (message.role() != MessageRole.WORKING_MEMORY && message.role() != MessageRole.CONTEXT_SUMMARY) {
-                highFidelityMessageCount += 1;
+                highFidelityMessages.add(message);
             }
         }
 
-        // 结构化模型摘要路径用于规则压缩仍超 token budget 的场景，
-        // 因此这里不再保留最近高保真窗口，而是用模型摘要整体替代旧历史。
+        // 结构化模型摘要路径用于规则压缩仍超 token budget 的场景。
+        // 这里仍然保留一小段最近高保真窗口，
+        // 让模型继续“记得刚刚做到了哪一步”，避免压缩后续航断掉。
+        StructuredRetainedWindow retainedWindow = selectStructuredRetainedWindow(highFidelityMessages);
         List<ConversationMessage> compactedMessages = new ArrayList<>(systemMessages);
         compactedMessages.add(snapshot.toWorkingMemoryMessage());
         compactedMessages.add(ConversationMessage.contextSummary(renderStructuredContextSummary(
                 snapshot,
                 structuredSummary
         )));
+        compactedMessages.addAll(retainedWindow.messages());
 
         return new CompactionResult(
                 List.copyOf(compactedMessages),
-                highFidelityMessageCount,
-                0
+                retainedWindow.archivedMessageCount(),
+                retainedWindow.microcompactedToolResultCount()
         );
+    }
+
+    public int estimateStructuredSummaryArchivedMessageCount(List<ConversationMessage> messages) {
+        Objects.requireNonNull(messages, "messages must not be null.");
+        List<ConversationMessage> highFidelityMessages = new ArrayList<>();
+        for (ConversationMessage message : messages) {
+            if (message.role() == MessageRole.SYSTEM
+                    || message.role() == MessageRole.WORKING_MEMORY
+                    || message.role() == MessageRole.CONTEXT_SUMMARY) {
+                continue;
+            }
+            highFidelityMessages.add(message);
+        }
+        return selectStructuredRetainedWindow(highFidelityMessages).archivedMessageCount();
     }
 
     private String renderStructuredContextSummary(
@@ -241,6 +258,33 @@ public final class ContextCompactor {
         return retainedStartIndex;
     }
 
+    private StructuredRetainedWindow selectStructuredRetainedWindow(List<ConversationMessage> highFidelityMessages) {
+        if (highFidelityMessages.isEmpty()) {
+            return new StructuredRetainedWindow(List.of(), 0, 0);
+        }
+
+        int retainedCount = Math.min(policy.retainedHighFidelityMessages(), highFidelityMessages.size());
+        int retainedStartIndex = highFidelityMessages.size() - retainedCount;
+        int protocolSafeRetainedStartIndex = expandStartToToolCallBoundary(highFidelityMessages, retainedStartIndex);
+
+        // 如果整段高保真历史只有一条初始 USER 消息，
+        // 任务目标已经被 working_memory.task_goal 保留，
+        // 再把原始长提示词直接带回去只会继续撑大 prompt。
+        if (highFidelityMessages.size() == 1
+                && highFidelityMessages.get(0).role() == MessageRole.USER) {
+            return new StructuredRetainedWindow(List.of(), 1, 0);
+        }
+
+        List<ConversationMessage> retainedMessages =
+                highFidelityMessages.subList(protocolSafeRetainedStartIndex, highFidelityMessages.size());
+        MicrocompactResult microcompactResult = microcompactToolResults(retainedMessages);
+        return new StructuredRetainedWindow(
+                microcompactResult.messages(),
+                protocolSafeRetainedStartIndex,
+                microcompactResult.microcompactedToolResultCount()
+        );
+    }
+
     public record CompactionResult(
             List<ConversationMessage> messages,
             int compactedHighFidelityMessageCount,
@@ -269,5 +313,12 @@ public final class ContextCompactor {
                 throw new IllegalArgumentException("microcompactedToolResultCount must not be negative.");
             }
         }
+    }
+
+    private record StructuredRetainedWindow(
+            List<ConversationMessage> messages,
+            int archivedMessageCount,
+            int microcompactedToolResultCount
+    ) {
     }
 }
