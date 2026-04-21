@@ -22,7 +22,8 @@ public record ContextCostScenario(
         ContextCompactionPolicy candidatePolicy,
         WorkspaceInitializer workspaceInitializer,
         ModelAdapterFactory modelAdapterFactory,
-        ScenarioVerifier scenarioVerifier
+        ScenarioVerifier scenarioVerifier,
+        List<ContextCostFactExpectation> expectedFacts
 ) {
 
     private static final Pattern SCENARIO_ID_PATTERN = Pattern.compile("[a-z0-9][a-z0-9-]*");
@@ -39,6 +40,32 @@ public record ContextCostScenario(
         workspaceInitializer = Objects.requireNonNull(workspaceInitializer, "workspaceInitializer must not be null.");
         modelAdapterFactory = Objects.requireNonNull(modelAdapterFactory, "modelAdapterFactory must not be null.");
         scenarioVerifier = Objects.requireNonNull(scenarioVerifier, "scenarioVerifier must not be null.");
+        expectedFacts = List.copyOf(Objects.requireNonNull(expectedFacts, "expectedFacts must not be null."));
+    }
+
+    public ContextCostScenario(
+            String id,
+            String title,
+            String prompt,
+            int maxSteps,
+            ContextCompactionPolicy baselinePolicy,
+            ContextCompactionPolicy candidatePolicy,
+            WorkspaceInitializer workspaceInitializer,
+            ModelAdapterFactory modelAdapterFactory,
+            ScenarioVerifier scenarioVerifier
+    ) {
+        this(
+                id,
+                title,
+                prompt,
+                maxSteps,
+                baselinePolicy,
+                candidatePolicy,
+                workspaceInitializer,
+                modelAdapterFactory,
+                scenarioVerifier,
+                List.of()
+        );
     }
 
     public ContextCompactionPolicy policyFor(ContextCostStrategy strategy) {

@@ -27,7 +27,7 @@ public final class ContextCostScenarioFactory {
     private static final ContextCompactionPolicy NO_COMPACTION_POLICY =
             new ContextCompactionPolicy(10_000, 9_999, 100);
     private static final ContextCompactionPolicy STRUCTURED_COMPACTION_POLICY =
-            new ContextCompactionPolicy(4, 1, 1);
+            new ContextCompactionPolicy(10_000, 8, 1, 5_000, 800, 700);
 
     private ContextCostScenarioFactory() {
     }
@@ -59,7 +59,8 @@ public final class ContextCostScenarioFactory {
                         readTool("call-f", "notes/f.txt"),
                         new FinalModelResponse("已读取 6 个文件")
                 )),
-                execution -> requireFinalAnswerContains(execution, "6")
+                execution -> requireFinalAnswerContains(execution, "6"),
+                longReadExpectedFacts("请连续读取 notes/a.txt 到 notes/f.txt，最后汇报已读文件数量。")
         );
     }
 
@@ -78,7 +79,20 @@ public final class ContextCostScenarioFactory {
                 STRUCTURED_COMPACTION_POLICY,
                 ContextCostScenarioFactory::writeLongReadFixture,
                 (workspace, strategy) -> createRealModelAdapter(modelConfig, workspace),
-                execution -> requireFinalAnswerContains(execution, "6")
+                execution -> requireFinalAnswerContains(execution, "6"),
+                longReadExpectedFacts("请严格按顺序完成：")
+        );
+    }
+
+    private static List<ContextCostFactExpectation> longReadExpectedFacts(String promptText) {
+        return List.of(
+                new ContextCostFactExpectation("goal", "用户目标", promptText),
+                new ContextCostFactExpectation("file-a", "已读文件 A", "notes/a.txt"),
+                new ContextCostFactExpectation("file-b", "已读文件 B", "notes/b.txt"),
+                new ContextCostFactExpectation("file-c", "已读文件 C", "notes/c.txt"),
+                new ContextCostFactExpectation("file-d", "已读文件 D", "notes/d.txt"),
+                new ContextCostFactExpectation("file-e", "已读文件 E", "notes/e.txt"),
+                new ContextCostFactExpectation("file-f", "已读文件 F", "notes/f.txt")
         );
     }
 

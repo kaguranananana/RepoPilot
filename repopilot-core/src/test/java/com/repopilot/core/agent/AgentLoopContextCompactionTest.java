@@ -76,6 +76,40 @@ class AgentLoopContextCompactionTest {
         assertEquals("compaction-1", tracePublisher.events().get(5).metadata().get("checkpointId"));
     }
 
+    @Test
+    void shouldCompactWhenEstimatedInputTokensExceedBudget() {
+        ToolRegistry toolRegistry = new ToolRegistry();
+        toolRegistry.register("echo", "回显输入文本", arguments -> ToolExecutionResult.success(arguments.get("text")));
+
+        RecordingTracePublisher tracePublisher = new RecordingTracePublisher();
+        RecordingModelAdapter modelAdapter = new RecordingModelAdapter(List.of(
+                new ToolCallModelResponse(List.of(new ToolCall("call-1", "echo", Map.of("text", "large-output")))),
+                new FinalModelResponse("分析完成")
+        ));
+
+        AgentLoopResult result = new AgentLoop(
+                toolRegistry,
+                AgentLoopObserver.noop(),
+                tracePublisher,
+                new ContextCompactor(new ContextCompactionPolicy(100, 2, 2, 50, 10, 10)),
+                messages -> messages.size() >= 3 ? 31 : 10
+        ).run(new AgentLoopRequest(
+                modelAdapter,
+                List.of(new ConversationMessage(MessageRole.USER, "读取大文件")),
+                4
+        ));
+
+        assertEquals("分析完成", result.finalAnswer());
+        assertTrue(modelAdapter.calls().get(1).stream().anyMatch(message -> message.role() == MessageRole.WORKING_MEMORY));
+        TracePublisher.TraceEvent completed = tracePublisher.events().stream()
+                .filter(event -> event.type() == TraceEventType.CONTEXT_COMPACTION_COMPLETED)
+                .findFirst()
+                .orElseThrow();
+        assertEquals("TOKEN_BUDGET", completed.metadata().get("trigger"));
+        assertEquals("31", completed.metadata().get("estimatedInputTokens"));
+        assertEquals("30", completed.metadata().get("maxInputTokens"));
+    }
+
     private static final class RecordingTracePublisher implements TracePublisher {
 
         private final List<TraceEvent> events = new ArrayList<>();

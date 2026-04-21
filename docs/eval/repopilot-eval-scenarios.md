@@ -80,6 +80,10 @@ java -cp "<cli-classpath>" com.repopilot.cli.RepoPilotCliApplication eval --runt
 - `baselinePeakInputTokens` / `candidatePeakInputTokens`：单轮模型调用的峰值输入 token。
 - `peakInputTokenReductionRate`：峰值输入 token 下降比例。
 - `candidateCompactionCount`：结构化压缩策略触发压缩的次数。
+- `candidateTokenBudgetCompactionCount`：候选策略中由 `TOKEN_BUDGET` 触发的压缩次数。
+- `candidateMicrocompactedToolResultCount`：候选策略中被 microcompact 规则压缩的工具结果数量。
+- `expectedFactCount` / `candidateRetainedFactCount`：场景声明的关键事实数量，以及候选策略压缩后 prompt 中仍可见的事实数量。
+- `candidateFactRetentionRate`：候选策略压缩后的关键事实保留率。
 
 `ESTIMATED_INPUT` 使用 JTokkit 对即将发送给模型的 messages 和 tools 做本地计数；`REAL_USAGE` 使用 OpenAI-compatible 响应中的 `usage.prompt_tokens`，缺失 usage 时直接失败。
 

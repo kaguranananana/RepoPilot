@@ -2,6 +2,9 @@ package com.repopilot.core.agent;
 
 import com.repopilot.core.context.ContextCompactionPolicy;
 import com.repopilot.core.context.ContextCompactor;
+import com.repopilot.core.context.ContextCompactionDecision;
+import com.repopilot.core.context.ContextCompactionTrigger;
+import com.repopilot.core.context.ContextInputTokenEstimator;
 import com.repopilot.core.context.WorkingMemory;
 import com.repopilot.core.context.WorkingMemorySnapshot;
 import com.repopilot.core.agent.loop.ToolCallLoopDetectedException;
@@ -28,6 +31,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.OptionalInt;
 
 /**
  * RepoPilot 的最小 ReAct 主循环。
@@ -39,6 +43,7 @@ public class AgentLoop {
     private final AgentLoopObserver observer;
     private final TracePublisher tracePublisher;
     private final ContextCompactor contextCompactor;
+    private final ContextInputTokenEstimator contextInputTokenEstimator;
 
     public AgentLoop(ToolRegistry toolRegistry) {
         this(
@@ -67,7 +72,29 @@ public class AgentLoop {
             TracePublisher tracePublisher,
             ContextCompactor contextCompactor
     ) {
-        this(createDefaultGovernedToolExecutor(toolRegistry), observer, tracePublisher, contextCompactor);
+        this(
+                createDefaultGovernedToolExecutor(toolRegistry),
+                observer,
+                tracePublisher,
+                contextCompactor,
+                ContextInputTokenEstimator.unavailable()
+        );
+    }
+
+    public AgentLoop(
+            ToolRegistry toolRegistry,
+            AgentLoopObserver observer,
+            TracePublisher tracePublisher,
+            ContextCompactor contextCompactor,
+            ContextInputTokenEstimator contextInputTokenEstimator
+    ) {
+        this(
+                createDefaultGovernedToolExecutor(toolRegistry),
+                observer,
+                tracePublisher,
+                contextCompactor,
+                contextInputTokenEstimator
+        );
     }
 
     public AgentLoop(GovernedToolExecutor governedToolExecutor) {
@@ -96,10 +123,24 @@ public class AgentLoop {
             TracePublisher tracePublisher,
             ContextCompactor contextCompactor
     ) {
+        this(governedToolExecutor, observer, tracePublisher, contextCompactor, ContextInputTokenEstimator.unavailable());
+    }
+
+    public AgentLoop(
+            GovernedToolExecutor governedToolExecutor,
+            AgentLoopObserver observer,
+            TracePublisher tracePublisher,
+            ContextCompactor contextCompactor,
+            ContextInputTokenEstimator contextInputTokenEstimator
+    ) {
         this.governedToolExecutor = Objects.requireNonNull(governedToolExecutor, "governedToolExecutor must not be null.");
         this.observer = Objects.requireNonNull(observer, "observer must not be null.");
         this.tracePublisher = Objects.requireNonNull(tracePublisher, "tracePublisher must not be null.");
         this.contextCompactor = Objects.requireNonNull(contextCompactor, "contextCompactor must not be null.");
+        this.contextInputTokenEstimator = Objects.requireNonNull(
+                contextInputTokenEstimator,
+                "contextInputTokenEstimator must not be null."
+        );
     }
 
     public AgentLoopResult run(AgentLoopRequest request) {
@@ -196,9 +237,10 @@ public class AgentLoop {
             List<ConversationMessage> messages,
             WorkingMemory workingMemory
     ) {
+        ContextCompactionDecision decision = evaluateContextCompaction(messages);
         // 先按显式阈值判断是否需要压缩，
         // 没超过阈值就直接沿用原始高保真窗口，避免无意义地改写上下文。
-        if (!contextCompactor.policy().shouldCompact(messages)) {
+        if (!decision.shouldCompact()) {
             return messages;
         }
 
@@ -212,16 +254,30 @@ public class AgentLoop {
         // 这个数字同时会进入 trace 和 working memory 的归档元数据。
         int compactedCount = highFidelityCount - retainedCount;
 
-        publishContextCompactionStarted(stepNumber, highFidelityCount, compactedCount);
-        // 先把归档元数据写进 working memory，
-        // 这样后续生成出的 `context_summary` 会携带最新 checkpoint 信息。
-        workingMemory.recordCompaction("high_fidelity_message_limit", compactedCount);
+        publishContextCompactionStarted(stepNumber, highFidelityCount, compactedCount, decision);
+        // 只有真正折叠旧高保真消息时才写入归档元数据，
+        // token budget 也可能只触发工具结果 microcompact，此时 archivedMessageCount 可以是 0。
+        if (compactedCount > 0) {
+            workingMemory.recordCompaction(decision.trigger().orElseThrow().archiveReason(), compactedCount);
+        }
         WorkingMemorySnapshot snapshot = workingMemory.snapshot();
         // 再用快照去重建消息窗口，
         // 输出会稳定收敛成“system -> working_memory -> context_summary -> recent messages”。
         ContextCompactor.CompactionResult compactionResult = contextCompactor.compact(messages, snapshot);
-        publishContextCompactionCompleted(stepNumber, snapshot, compactionResult);
+        publishContextCompactionCompleted(stepNumber, snapshot, compactionResult, decision);
         return new ArrayList<>(compactionResult.messages());
+    }
+
+    private ContextCompactionDecision evaluateContextCompaction(List<ConversationMessage> messages) {
+        OptionalInt estimatedInputTokens = OptionalInt.empty();
+        if (contextCompactor.policy().isTokenBudgetEnabled()) {
+            int estimate = contextInputTokenEstimator.estimateInputTokens(List.copyOf(messages));
+            if (estimate < 0) {
+                throw new IllegalStateException("输入 token 估算结果不能为负数。");
+            }
+            estimatedInputTokens = OptionalInt.of(estimate);
+        }
+        return contextCompactor.policy().evaluate(messages, estimatedInputTokens);
     }
 
     private void publishModelCallRequested(int stepNumber, List<ConversationMessage> messages) {
@@ -236,35 +292,67 @@ public class AgentLoop {
         ));
     }
 
-    private void publishContextCompactionStarted(int stepNumber, int highFidelityCount, int compactedCount) {
+    private void publishContextCompactionStarted(
+            int stepNumber,
+            int highFidelityCount,
+            int compactedCount,
+            ContextCompactionDecision decision
+    ) {
+        Map<String, String> metadata = compactionMetadata(stepNumber, highFidelityCount, compactedCount, decision);
         tracePublisher.publish(new TracePublisher.TraceEvent(
                 TraceEventType.CONTEXT_COMPACTION_STARTED,
                 "第%d步开始压缩上下文".formatted(stepNumber),
                 Instant.now(),
-                Map.of(
-                        "stepNumber", Integer.toString(stepNumber),
-                        "highFidelityMessageCount", Integer.toString(highFidelityCount),
-                        "compactedMessageCount", Integer.toString(compactedCount)
-                )
+                metadata
         ));
     }
 
     private void publishContextCompactionCompleted(
             int stepNumber,
             WorkingMemorySnapshot snapshot,
-            ContextCompactor.CompactionResult compactionResult
+            ContextCompactor.CompactionResult compactionResult,
+            ContextCompactionDecision decision
     ) {
+        Map<String, String> metadata = compactionMetadata(
+                stepNumber,
+                -1,
+                compactionResult.compactedHighFidelityMessageCount(),
+                decision
+        );
+        metadata.put("messageCountAfter", Integer.toString(compactionResult.messages().size()));
+        metadata.put("checkpointId", snapshot.resumeCheckpointId() == null ? "none" : snapshot.resumeCheckpointId());
+        metadata.put(
+                "microcompactedToolResultCount",
+                Integer.toString(compactionResult.microcompactedToolResultCount())
+        );
+
         tracePublisher.publish(new TracePublisher.TraceEvent(
                 TraceEventType.CONTEXT_COMPACTION_COMPLETED,
                 "第%d步完成上下文压缩".formatted(stepNumber),
                 Instant.now(),
-                Map.of(
-                        "stepNumber", Integer.toString(stepNumber),
-                        "compactedMessageCount", Integer.toString(compactionResult.compactedHighFidelityMessageCount()),
-                        "messageCountAfter", Integer.toString(compactionResult.messages().size()),
-                        "checkpointId", snapshot.resumeCheckpointId() == null ? "none" : snapshot.resumeCheckpointId()
-                )
+                metadata
         ));
+    }
+
+    private Map<String, String> compactionMetadata(
+            int stepNumber,
+            int highFidelityCount,
+            int compactedCount,
+            ContextCompactionDecision decision
+    ) {
+        Map<String, String> metadata = new LinkedHashMap<>();
+        metadata.put("stepNumber", Integer.toString(stepNumber));
+        if (highFidelityCount >= 0) {
+            metadata.put("highFidelityMessageCount", Integer.toString(highFidelityCount));
+        }
+        metadata.put("compactedMessageCount", Integer.toString(compactedCount));
+        ContextCompactionTrigger trigger = decision.trigger().orElseThrow();
+        metadata.put("trigger", trigger.name());
+        decision.estimatedInputTokens()
+                .ifPresent(value -> metadata.put("estimatedInputTokens", Integer.toString(value)));
+        decision.maxInputTokens()
+                .ifPresent(value -> metadata.put("maxInputTokens", Integer.toString(value)));
+        return metadata;
     }
 
     private void publishModelResponseReceived(int stepNumber, ModelResponse response) {

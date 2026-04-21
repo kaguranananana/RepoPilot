@@ -98,6 +98,52 @@ class ContextCostEvalRunnerTest {
         assertTrue(exception.getMessage().contains("prompt_tokens"));
     }
 
+    @Test
+    void shouldRecordTokenBudgetAndMicrocompactMetrics() {
+        ContextCostEvalRunner runner = new ContextCostEvalRunner(
+                tempRoot.resolve("budget-metrics-workspaces"),
+                Clock.fixed(Instant.parse("2026-04-21T01:00:00Z"), ZoneOffset.UTC),
+                (messages, tools) -> messages.stream().mapToInt(message -> message.content().length()).sum()
+        );
+
+        ContextCostEvalResult result = runner.run(
+                ContextCostMeasurementKind.ESTIMATED_INPUT,
+                "test-estimator",
+                0.0,
+                List.of(twoReadTokenBudgetScenario())
+        );
+
+        ContextCostEvalResult.ScenarioComparison comparison = result.scenarioComparisons().get(0);
+        assertEquals(2, comparison.candidateTokenBudgetCompactionCount());
+        assertEquals(1, comparison.candidateMicrocompactedToolResultCount());
+        assertEquals(0, comparison.baselineTokenBudgetCompactionCount());
+        assertEquals(0, comparison.baselineMicrocompactedToolResultCount());
+    }
+
+    @Test
+    void shouldCalculateCandidateFactRetentionFromCompactedPrompt() {
+        ContextCostEvalRunner runner = new ContextCostEvalRunner(
+                tempRoot.resolve("fact-retention-workspaces"),
+                Clock.fixed(Instant.parse("2026-04-21T01:00:00Z"), ZoneOffset.UTC),
+                (messages, tools) -> messages.stream().mapToInt(message -> message.content().length()).sum()
+        );
+
+        ContextCostEvalResult result = runner.run(
+                ContextCostMeasurementKind.ESTIMATED_INPUT,
+                "test-estimator",
+                0.0,
+                List.of(twoReadTokenBudgetScenario())
+        );
+
+        ContextCostEvalResult.ScenarioComparison comparison = result.scenarioComparisons().get(0);
+        assertEquals(3, comparison.expectedFactCount());
+        assertEquals(3, comparison.candidateRetainedFactCount());
+        assertEquals(1.0, comparison.candidateFactRetentionRate());
+        assertEquals(3, result.summary().expectedFactCount());
+        assertEquals(3, result.summary().candidateRetainedFactCount());
+        assertEquals(1.0, result.summary().candidateFactRetentionRate());
+    }
+
     private ContextCostScenario longReadScenario(boolean includeUsage) {
         return new ContextCostScenario(
                 "long-read",
@@ -119,6 +165,33 @@ class ContextCostEvalRunnerTest {
                         ? responses(includeUsage, 100, 120, 140, 0, 0, 0)
                         : responses(includeUsage, 60, 70, 60, 0, 0, 0)),
                 execution -> assertTrue(execution.agentLoopResult().finalAnswer().contains("完成"))
+        );
+    }
+
+    private ContextCostScenario twoReadTokenBudgetScenario() {
+        return new ContextCostScenario(
+                "two-read-budget",
+                "两次读取触发 token budget",
+                "连续读取两个文件后汇报。",
+                5,
+                new ContextCompactionPolicy(10_000, 9_999, 10),
+                new ContextCompactionPolicy(100, 100, 1, 100, 20, 20),
+                workspace -> {
+                    Files.createDirectories(workspace.resolve("notes"));
+                    Files.writeString(workspace.resolve("notes/a.txt"), "A".repeat(3_000));
+                    Files.writeString(workspace.resolve("notes/b.txt"), "B".repeat(3_000));
+                },
+                (workspace, strategy) -> scriptedModel(List.of(
+                        tool("call-a", "read_file", Map.of("path", "notes/a.txt")),
+                        tool("call-b", "read_file", Map.of("path", "notes/b.txt")),
+                        new FinalModelResponse("完成")
+                )),
+                execution -> assertTrue(execution.agentLoopResult().finalAnswer().contains("完成")),
+                List.of(
+                        new ContextCostFactExpectation("goal", "用户目标", "连续读取两个文件后汇报。"),
+                        new ContextCostFactExpectation("file-a", "已读文件 A", "notes/a.txt"),
+                        new ContextCostFactExpectation("file-b", "已读文件 B", "notes/b.txt")
+                )
         );
     }
 

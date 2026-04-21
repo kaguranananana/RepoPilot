@@ -45,7 +45,10 @@ public record ContextCostEvalResult(
             double peakInputTokenReductionRate,
             double baselineInputCost,
             double candidateInputCost,
-            double inputCostReductionRate
+            double inputCostReductionRate,
+            int expectedFactCount,
+            int candidateRetainedFactCount,
+            double candidateFactRetentionRate
     ) {
 
         public Summary {
@@ -62,6 +65,12 @@ public record ContextCostEvalResult(
                 throw new IllegalArgumentException("cost metrics must not be negative.");
             }
             requireFinite(inputCostReductionRate, "inputCostReductionRate");
+            requireNonNegative(expectedFactCount, "expectedFactCount");
+            requireNonNegative(candidateRetainedFactCount, "candidateRetainedFactCount");
+            if (candidateRetainedFactCount > expectedFactCount) {
+                throw new IllegalArgumentException("candidateRetainedFactCount must not exceed expectedFactCount.");
+            }
+            requireFinite(candidateFactRetentionRate, "candidateFactRetentionRate");
         }
     }
 
@@ -77,7 +86,14 @@ public record ContextCostEvalResult(
             int baselineModelCalls,
             int candidateModelCalls,
             int baselineCompactionCount,
-            int candidateCompactionCount
+            int candidateCompactionCount,
+            int baselineTokenBudgetCompactionCount,
+            int candidateTokenBudgetCompactionCount,
+            int baselineMicrocompactedToolResultCount,
+            int candidateMicrocompactedToolResultCount,
+            int expectedFactCount,
+            int candidateRetainedFactCount,
+            double candidateFactRetentionRate
     ) {
 
         public ScenarioComparison {
@@ -93,6 +109,16 @@ public record ContextCostEvalResult(
             requireNonNegative(candidateModelCalls, "candidateModelCalls");
             requireNonNegative(baselineCompactionCount, "baselineCompactionCount");
             requireNonNegative(candidateCompactionCount, "candidateCompactionCount");
+            requireNonNegative(baselineTokenBudgetCompactionCount, "baselineTokenBudgetCompactionCount");
+            requireNonNegative(candidateTokenBudgetCompactionCount, "candidateTokenBudgetCompactionCount");
+            requireNonNegative(baselineMicrocompactedToolResultCount, "baselineMicrocompactedToolResultCount");
+            requireNonNegative(candidateMicrocompactedToolResultCount, "candidateMicrocompactedToolResultCount");
+            requireNonNegative(expectedFactCount, "expectedFactCount");
+            requireNonNegative(candidateRetainedFactCount, "candidateRetainedFactCount");
+            if (candidateRetainedFactCount > expectedFactCount) {
+                throw new IllegalArgumentException("candidateRetainedFactCount must not exceed expectedFactCount.");
+            }
+            requireFinite(candidateFactRetentionRate, "candidateFactRetentionRate");
         }
     }
 

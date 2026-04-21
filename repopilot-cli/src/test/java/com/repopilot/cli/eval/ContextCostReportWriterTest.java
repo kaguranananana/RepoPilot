@@ -36,7 +36,10 @@ class ContextCostReportWriterTest {
                         0.375,
                         0.02,
                         0.012,
-                        0.4
+                        0.4,
+                        3,
+                        3,
+                        1.0
                 ),
                 List.of(new ContextCostEvalResult.ScenarioComparison(
                         "long-read",
@@ -50,7 +53,14 @@ class ContextCostReportWriterTest {
                         6,
                         6,
                         0,
-                        3
+                        3,
+                        0,
+                        2,
+                        0,
+                        4,
+                        3,
+                        3,
+                        1.0
                 ))
         );
         Path jsonFile = tempRoot.resolve("context-cost.json");
@@ -62,10 +72,16 @@ class ContextCostReportWriterTest {
         assertEquals("ESTIMATED_INPUT", root.path("measurementKind").asText());
         assertEquals(0.4, root.path("summary").path("inputTokenReductionRate").asDouble());
         assertEquals("long-read", root.path("scenarioComparisons").get(0).path("scenarioId").asText());
+        assertEquals(2, root.path("scenarioComparisons").get(0).path("candidateTokenBudgetCompactionCount").asInt());
+        assertEquals(4, root.path("scenarioComparisons").get(0).path("candidateMicrocompactedToolResultCount").asInt());
+        assertEquals(1.0, root.path("summary").path("candidateFactRetentionRate").asDouble());
+        assertEquals(3, root.path("scenarioComparisons").get(0).path("candidateRetainedFactCount").asInt());
 
         String markdown = Files.readString(markdownFile);
         assertTrue(markdown.contains("Context Cost Eval Report"));
         assertTrue(markdown.contains("平均输入 token 降低：40.00%"));
+        assertTrue(markdown.contains("关键事实保留率：100.00%"));
         assertTrue(markdown.contains("| long-read |"));
+        assertTrue(markdown.contains("| long-read | 10000 | 6000 | 40.00% | 3 | 2 | 4 | 3/3 | 100.00% |"));
     }
 }

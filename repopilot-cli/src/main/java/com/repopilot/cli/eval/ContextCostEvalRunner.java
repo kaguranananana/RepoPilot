@@ -116,7 +116,8 @@ public final class ContextCostEvalRunner {
                     governedToolExecutor,
                     observer,
                     traceCollector,
-                    new ContextCompactor(scenario.policyFor(strategy))
+                    new ContextCompactor(scenario.policyFor(strategy)),
+                    messages -> tokenEstimator.estimateInputTokens(messages, toolRegistry.list())
             ).run(new AgentLoopRequest(
                     scenario.modelAdapterFactory().create(scenarioWorkspace, strategy),
                     List.of(new ConversationMessage(MessageRole.USER, scenario.prompt())),
@@ -133,7 +134,10 @@ public final class ContextCostEvalRunner {
                     observer.inputTokensFor(measurementKind),
                     observer.peakInputTokensFor(measurementKind),
                     observer.modelCallCount(),
-                    traceCollector.compactionCount()
+                    traceCollector.compactionCount(),
+                    traceCollector.tokenBudgetCompactionCount(),
+                    traceCollector.microcompactedToolResultCount(),
+                    evaluateFactRetention(scenario.expectedFacts(), observer.compactedPromptMessages())
             );
         } catch (Exception exception) {
             throw new IllegalStateException(
@@ -160,7 +164,14 @@ public final class ContextCostEvalRunner {
                 baseline.modelCalls(),
                 candidate.modelCalls(),
                 baseline.compactionCount(),
-                candidate.compactionCount()
+                candidate.compactionCount(),
+                baseline.tokenBudgetCompactionCount(),
+                candidate.tokenBudgetCompactionCount(),
+                baseline.microcompactedToolResultCount(),
+                candidate.microcompactedToolResultCount(),
+                candidate.factRetention().expectedFactCount(),
+                candidate.factRetention().retainedFactCount(),
+                candidate.factRetention().retentionRate()
         );
     }
 
@@ -184,6 +195,12 @@ public final class ContextCostEvalRunner {
                 .orElse(0);
         double baselineCost = inputCost(baselineTotal, inputPricePerMillionTokens);
         double candidateCost = inputCost(candidateTotal, inputPricePerMillionTokens);
+        int expectedFactCount = comparisons.stream()
+                .mapToInt(ContextCostEvalResult.ScenarioComparison::expectedFactCount)
+                .sum();
+        int candidateRetainedFactCount = comparisons.stream()
+                .mapToInt(ContextCostEvalResult.ScenarioComparison::candidateRetainedFactCount)
+                .sum();
 
         return new ContextCostEvalResult.Summary(
                 comparisons.size(),
@@ -195,8 +212,43 @@ public final class ContextCostEvalRunner {
                 reductionRate(baselinePeak, candidatePeak),
                 baselineCost,
                 candidateCost,
-                reductionRateFromDouble(baselineCost, candidateCost)
+                reductionRateFromDouble(baselineCost, candidateCost),
+                expectedFactCount,
+                candidateRetainedFactCount,
+                reductionRate(expectedFactCount, expectedFactCount - candidateRetainedFactCount)
         );
+    }
+
+    private FactRetentionResult evaluateFactRetention(
+            List<ContextCostFactExpectation> expectedFacts,
+            List<List<ConversationMessage>> compactedPromptMessages
+    ) {
+        List<ContextCostFactExpectation> safeExpectedFacts =
+                List.copyOf(Objects.requireNonNull(expectedFacts, "expectedFacts must not be null."));
+        if (safeExpectedFacts.isEmpty()) {
+            return new FactRetentionResult(0, 0);
+        }
+        String retainedPromptText = compactedPromptMessages.isEmpty()
+                ? ""
+                : renderPromptText(compactedPromptMessages.get(compactedPromptMessages.size() - 1));
+        int retainedFacts = 0;
+        for (ContextCostFactExpectation expectedFact : safeExpectedFacts) {
+            if (retainedPromptText.contains(expectedFact.requiredText())) {
+                retainedFacts += 1;
+            }
+        }
+        return new FactRetentionResult(safeExpectedFacts.size(), retainedFacts);
+    }
+
+    private String renderPromptText(List<ConversationMessage> messages) {
+        StringBuilder builder = new StringBuilder();
+        for (ConversationMessage message : messages) {
+            builder.append(message.role())
+                    .append(System.lineSeparator())
+                    .append(message.content())
+                    .append(System.lineSeparator());
+        }
+        return builder.toString();
     }
 
     private void resetScenarioWorkspace(Path scenarioWorkspace) throws IOException {
@@ -247,17 +299,56 @@ public final class ContextCostEvalRunner {
             int totalInputTokens,
             int peakInputTokens,
             int modelCalls,
-            int compactionCount
+            int compactionCount,
+            int tokenBudgetCompactionCount,
+            int microcompactedToolResultCount,
+            FactRetentionResult factRetention
     ) {
 
         static StrategyRunResult success(
                 List<Integer> inputTokens,
                 int peakInputTokens,
                 int modelCalls,
-                int compactionCount
+                int compactionCount,
+                int tokenBudgetCompactionCount,
+                int microcompactedToolResultCount,
+                FactRetentionResult factRetention
         ) {
             int totalInputTokens = inputTokens.stream().mapToInt(Integer::intValue).sum();
-            return new StrategyRunResult(totalInputTokens, peakInputTokens, modelCalls, compactionCount);
+            return new StrategyRunResult(
+                    totalInputTokens,
+                    peakInputTokens,
+                    modelCalls,
+                    compactionCount,
+                    tokenBudgetCompactionCount,
+                    microcompactedToolResultCount,
+                    Objects.requireNonNull(factRetention, "factRetention must not be null.")
+            );
+        }
+    }
+
+    private record FactRetentionResult(
+            int expectedFactCount,
+            int retainedFactCount
+    ) {
+
+        private FactRetentionResult {
+            if (expectedFactCount < 0) {
+                throw new IllegalArgumentException("expectedFactCount must not be negative.");
+            }
+            if (retainedFactCount < 0) {
+                throw new IllegalArgumentException("retainedFactCount must not be negative.");
+            }
+            if (retainedFactCount > expectedFactCount) {
+                throw new IllegalArgumentException("retainedFactCount must not exceed expectedFactCount.");
+            }
+        }
+
+        private double retentionRate() {
+            if (expectedFactCount == 0) {
+                return 0.0;
+            }
+            return retainedFactCount / (double) expectedFactCount;
         }
     }
 
@@ -267,6 +358,7 @@ public final class ContextCostEvalRunner {
         private final List<ToolDefinition> availableTools;
         private final List<Integer> estimatedInputTokens = new ArrayList<>();
         private final List<Integer> realPromptTokens = new ArrayList<>();
+        private final List<List<ConversationMessage>> compactedPromptMessages = new ArrayList<>();
 
         private TokenAccountingObserver(ModelInputTokenEstimator tokenEstimator, List<ToolDefinition> availableTools) {
             this.tokenEstimator = tokenEstimator;
@@ -280,6 +372,9 @@ public final class ContextCostEvalRunner {
                 throw new IllegalStateException("本地 token 估算结果不能为负数。");
             }
             estimatedInputTokens.add(inputTokens);
+            if (containsCompactedContext(messages)) {
+                compactedPromptMessages.add(List.copyOf(messages));
+            }
         }
 
         @Override
@@ -306,6 +401,16 @@ public final class ContextCostEvalRunner {
         int modelCallCount() {
             return estimatedInputTokens.size();
         }
+
+        List<List<ConversationMessage>> compactedPromptMessages() {
+            return List.copyOf(compactedPromptMessages);
+        }
+
+        private boolean containsCompactedContext(List<ConversationMessage> messages) {
+            return messages.stream().anyMatch(message ->
+                    message.role() == MessageRole.WORKING_MEMORY || message.role() == MessageRole.CONTEXT_SUMMARY
+            );
+        }
     }
 
     private static final class TraceCollector implements TracePublisher {
@@ -325,6 +430,22 @@ public final class ContextCostEvalRunner {
             return (int) events.stream()
                     .filter(event -> event.type() == TraceEventType.CONTEXT_COMPACTION_COMPLETED)
                     .count();
+        }
+
+        int tokenBudgetCompactionCount() {
+            return (int) events.stream()
+                    .filter(event -> event.type() == TraceEventType.CONTEXT_COMPACTION_COMPLETED)
+                    .filter(event -> "TOKEN_BUDGET".equals(event.metadata().get("trigger")))
+                    .count();
+        }
+
+        int microcompactedToolResultCount() {
+            return events.stream()
+                    .filter(event -> event.type() == TraceEventType.CONTEXT_COMPACTION_COMPLETED)
+                    .map(event -> event.metadata().get("microcompactedToolResultCount"))
+                    .filter(Objects::nonNull)
+                    .mapToInt(Integer::parseInt)
+                    .sum();
         }
     }
 }

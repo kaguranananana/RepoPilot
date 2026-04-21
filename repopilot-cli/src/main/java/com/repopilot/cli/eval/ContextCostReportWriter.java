@@ -62,6 +62,9 @@ public final class ContextCostReportWriter {
         summaryNode.put("baselineInputCost", summary.baselineInputCost());
         summaryNode.put("candidateInputCost", summary.candidateInputCost());
         summaryNode.put("inputCostReductionRate", summary.inputCostReductionRate());
+        summaryNode.put("expectedFactCount", summary.expectedFactCount());
+        summaryNode.put("candidateRetainedFactCount", summary.candidateRetainedFactCount());
+        summaryNode.put("candidateFactRetentionRate", summary.candidateFactRetentionRate());
 
         ArrayNode scenarioNodes = root.putArray("scenarioComparisons");
         for (ContextCostEvalResult.ScenarioComparison comparison : result.scenarioComparisons()) {
@@ -78,6 +81,19 @@ public final class ContextCostReportWriter {
             scenarioNode.put("candidateModelCalls", comparison.candidateModelCalls());
             scenarioNode.put("baselineCompactionCount", comparison.baselineCompactionCount());
             scenarioNode.put("candidateCompactionCount", comparison.candidateCompactionCount());
+            scenarioNode.put("baselineTokenBudgetCompactionCount", comparison.baselineTokenBudgetCompactionCount());
+            scenarioNode.put("candidateTokenBudgetCompactionCount", comparison.candidateTokenBudgetCompactionCount());
+            scenarioNode.put(
+                    "baselineMicrocompactedToolResultCount",
+                    comparison.baselineMicrocompactedToolResultCount()
+            );
+            scenarioNode.put(
+                    "candidateMicrocompactedToolResultCount",
+                    comparison.candidateMicrocompactedToolResultCount()
+            );
+            scenarioNode.put("expectedFactCount", comparison.expectedFactCount());
+            scenarioNode.put("candidateRetainedFactCount", comparison.candidateRetainedFactCount());
+            scenarioNode.put("candidateFactRetentionRate", comparison.candidateFactRetentionRate());
         }
         return root;
     }
@@ -96,10 +112,18 @@ public final class ContextCostReportWriter {
         builder.append("- 峰值输入 token 降低：")
                 .append(formatPercent(summary.peakInputTokenReductionRate()))
                 .append(System.lineSeparator()).append(System.lineSeparator());
+        builder.append("- 关键事实保留率：")
+                .append(formatPercent(summary.candidateFactRetentionRate()))
+                .append(" (")
+                .append(summary.candidateRetainedFactCount())
+                .append("/")
+                .append(summary.expectedFactCount())
+                .append(")")
+                .append(System.lineSeparator()).append(System.lineSeparator());
 
-        builder.append("| scenario | baseline input | candidate input | reduction | candidate compactions |")
+        builder.append("| scenario | baseline input | candidate input | reduction | candidate compactions | token budget | microcompacted tools | retained facts | fact retention |")
                 .append(System.lineSeparator());
-        builder.append("| --- | ---: | ---: | ---: | ---: |").append(System.lineSeparator());
+        builder.append("| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |").append(System.lineSeparator());
         for (ContextCostEvalResult.ScenarioComparison comparison : result.scenarioComparisons()) {
             builder.append("| ")
                     .append(comparison.scenarioId())
@@ -111,6 +135,16 @@ public final class ContextCostReportWriter {
                     .append(formatPercent(comparison.inputTokenReductionRate()))
                     .append(" | ")
                     .append(comparison.candidateCompactionCount())
+                    .append(" | ")
+                    .append(comparison.candidateTokenBudgetCompactionCount())
+                    .append(" | ")
+                    .append(comparison.candidateMicrocompactedToolResultCount())
+                    .append(" | ")
+                    .append(comparison.candidateRetainedFactCount())
+                    .append("/")
+                    .append(comparison.expectedFactCount())
+                    .append(" | ")
+                    .append(formatPercent(comparison.candidateFactRetentionRate()))
                     .append(" |")
                     .append(System.lineSeparator());
         }

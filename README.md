@@ -178,6 +178,8 @@ java -cp "$CP" com.repopilot.cli.RepoPilotCliApplication context-cost
 - `target/repopilot-context-cost-estimated-report.json`
 - `target/repopilot-context-cost-estimated-report.md`
 
+报告会同时输出累计输入 token、峰值输入 token、候选策略压缩次数、其中由 `TOKEN_BUDGET` 触发的次数、被规则化 microcompact 压缩的工具结果数量，以及压缩后 prompt 对关键事实的保留率。
+
 真实 usage 口径会调用 OpenAI-compatible provider，并要求每次响应都返回 `usage.prompt_tokens`；如果 provider 不返回 usage，评测会直接失败：
 
 ```bash

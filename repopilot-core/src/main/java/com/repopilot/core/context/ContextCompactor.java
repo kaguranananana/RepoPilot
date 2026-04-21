@@ -2,15 +2,28 @@ package com.repopilot.core.context;
 
 import com.repopilot.core.model.ConversationMessage;
 import com.repopilot.core.model.MessageRole;
+import com.repopilot.core.model.ToolCall;
 import java.util.ArrayList;
+import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
+import java.util.stream.Collectors;
 
 /**
  * 上下文压缩器。
  * 负责把高保真历史裁剪为“固定前缀 + 结构化摘要 + 最近窗口”。
  */
 public final class ContextCompactor {
+
+    private static final Set<String> MICROCOMPACTABLE_TOOLS = Set.of(
+            "read_file",
+            "grep_files",
+            "run_command",
+            "apply_patch"
+    );
 
     private final ContextCompactionPolicy policy;
 
@@ -44,6 +57,7 @@ public final class ContextCompactor {
         int protocolSafeRetainedStartIndex = expandStartToToolCallBoundary(highFidelityMessages, retainedStartIndex);
         List<ConversationMessage> retainedMessages =
                 highFidelityMessages.subList(protocolSafeRetainedStartIndex, highFidelityMessages.size());
+        MicrocompactResult microcompactResult = microcompactToolResults(retainedMessages);
         int compactedCount = protocolSafeRetainedStartIndex;
 
         // 先保留所有 system 消息，
@@ -59,9 +73,96 @@ public final class ContextCompactor {
         }
         // 最后拼接最近高保真消息，
         // 保持模型对最新工具调用与对话轮次的细粒度感知。
-        compactedMessages.addAll(retainedMessages);
+        compactedMessages.addAll(microcompactResult.messages());
 
-        return new CompactionResult(List.copyOf(compactedMessages), compactedCount);
+        return new CompactionResult(
+                List.copyOf(compactedMessages),
+                compactedCount,
+                microcompactResult.microcompactedToolResultCount()
+        );
+    }
+
+    private MicrocompactResult microcompactToolResults(List<ConversationMessage> retainedMessages) {
+        // 先收集 retained window 内的 assistant tool_calls，
+        // 后续 TOOL 消息才能用 tool_call_id 找回工具名和参数。
+        Map<String, ToolCall> toolCallsById = collectToolCallsById(retainedMessages);
+        // 再从尾部找出最近的 TOOL 结果，
+        // 这些结果保持原文，避免刚执行完的工具输出被过早压缩。
+        Set<String> rawToolResultIds = latestRawToolResultIds(retainedMessages);
+        List<ConversationMessage> compactedMessages = new ArrayList<>(retainedMessages.size());
+        int microcompactedCount = 0;
+
+        for (ConversationMessage message : retainedMessages) {
+            ToolCall toolCall = toolCallsById.get(message.toolCallId());
+            if (shouldMicrocompact(message, toolCall, rawToolResultIds)) {
+                compactedMessages.add(ConversationMessage.toolResult(
+                        message.toolCallId(),
+                        renderMicrocompactedToolResult(toolCall, message.content())
+                ));
+                microcompactedCount += 1;
+                continue;
+            }
+            compactedMessages.add(message);
+        }
+
+        return new MicrocompactResult(List.copyOf(compactedMessages), microcompactedCount);
+    }
+
+    private Map<String, ToolCall> collectToolCallsById(List<ConversationMessage> messages) {
+        Map<String, ToolCall> toolCallsById = new LinkedHashMap<>();
+        for (ConversationMessage message : messages) {
+            for (ToolCall toolCall : message.toolCalls()) {
+                toolCallsById.put(toolCall.id(), toolCall);
+            }
+        }
+        return toolCallsById;
+    }
+
+    private Set<String> latestRawToolResultIds(List<ConversationMessage> messages) {
+        Set<String> rawToolResultIds = new HashSet<>();
+        for (int index = messages.size() - 1; index >= 0; index--) {
+            ConversationMessage message = messages.get(index);
+            if (message.role() != MessageRole.TOOL) {
+                continue;
+            }
+            rawToolResultIds.add(message.toolCallId());
+            if (rawToolResultIds.size() >= policy.maxRecentToolResults()) {
+                break;
+            }
+        }
+        return rawToolResultIds;
+    }
+
+    private boolean shouldMicrocompact(
+            ConversationMessage message,
+            ToolCall toolCall,
+            Set<String> rawToolResultIds
+    ) {
+        return message.role() == MessageRole.TOOL
+                && toolCall != null
+                && MICROCOMPACTABLE_TOOLS.contains(toolCall.toolName())
+                && !rawToolResultIds.contains(message.toolCallId());
+    }
+
+    private String renderMicrocompactedToolResult(ToolCall toolCall, String originalContent) {
+        return String.join(System.lineSeparator(),
+                "microcompact_tool_result",
+                "- tool_call_id: " + toolCall.id(),
+                "- tool_name: " + toolCall.toolName(),
+                "- arguments: " + renderArguments(toolCall.arguments()),
+                "- original_characters: " + originalContent.length(),
+                "- original_content: omitted_from_prompt"
+        );
+    }
+
+    private String renderArguments(Map<String, String> arguments) {
+        if (arguments.isEmpty()) {
+            return "none";
+        }
+        return arguments.entrySet().stream()
+                .sorted(Map.Entry.comparingByKey())
+                .map(entry -> entry.getKey() + "=" + entry.getValue())
+                .collect(Collectors.joining(", "));
     }
 
     private int expandStartToToolCallBoundary(List<ConversationMessage> highFidelityMessages, int retainedStartIndex) {
@@ -92,13 +193,30 @@ public final class ContextCompactor {
 
     public record CompactionResult(
             List<ConversationMessage> messages,
-            int compactedHighFidelityMessageCount
+            int compactedHighFidelityMessageCount,
+            int microcompactedToolResultCount
     ) {
 
         public CompactionResult {
             messages = List.copyOf(messages);
             if (compactedHighFidelityMessageCount < 0) {
                 throw new IllegalArgumentException("compactedHighFidelityMessageCount must not be negative.");
+            }
+            if (microcompactedToolResultCount < 0) {
+                throw new IllegalArgumentException("microcompactedToolResultCount must not be negative.");
+            }
+        }
+    }
+
+    private record MicrocompactResult(
+            List<ConversationMessage> messages,
+            int microcompactedToolResultCount
+    ) {
+
+        private MicrocompactResult {
+            messages = List.copyOf(messages);
+            if (microcompactedToolResultCount < 0) {
+                throw new IllegalArgumentException("microcompactedToolResultCount must not be negative.");
             }
         }
     }
