@@ -265,11 +265,30 @@ class InteractiveRuntimeRunnerTest {
                     String latestPrompt = messages.stream()
                             .filter(message -> message.role() == MessageRole.USER)
                             .reduce((first, second) -> second)
+                            .or(() -> messages.stream()
+                                    .filter(message -> message.role() == MessageRole.CONTEXT_SUMMARY)
+                                    .reduce((first, second) -> second))
                             .orElseThrow()
                             .content();
                     return new FinalModelResponse("回答: " + latestPrompt);
                 }
             };
+        }
+
+        @Override
+        public ModelAdapter createContextSummaryModel(SessionSummary sessionSummary) {
+            return messages -> new FinalModelResponse("""
+                    {
+                      "user_goal": "测试长上下文压缩",
+                      "current_phase": "EXECUTE",
+                      "plan_state": "已触发结构化摘要",
+                      "touched_files": [],
+                      "important_findings": ["测试历史已被压缩"],
+                      "failed_commands": [],
+                      "decisions": ["使用结构化摘要替代原始长 prompt"],
+                      "next_actions": ["继续返回确定性回答"]
+                    }
+                    """);
         }
     }
 

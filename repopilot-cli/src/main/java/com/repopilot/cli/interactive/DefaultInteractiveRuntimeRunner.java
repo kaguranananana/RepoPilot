@@ -10,6 +10,7 @@ import com.repopilot.core.agent.AgentRunMode;
 import com.repopilot.core.approval.ToolApprovalHandler;
 import com.repopilot.core.model.ConversationMessage;
 import com.repopilot.core.model.MessageRole;
+import com.repopilot.core.model.ModelAdapter;
 import com.repopilot.core.prompt.DynamicPromptContext;
 import com.repopilot.core.prompt.SystemPromptBoundary;
 import com.repopilot.core.prompt.SystemPromptBuilder;
@@ -161,15 +162,20 @@ public final class DefaultInteractiveRuntimeRunner implements InteractiveRuntime
                 toolApprovalHandler
         );
         List<ToolDefinition> effectiveTools = resolveEffectiveTools(refreshedHistory, toolRegistry, runMode);
+        // 主模型使用当前运行模式和 Skill 约束后的工具子集；
+        // 摘要模型固定不暴露工具，只负责把历史压缩成结构化 JSON。
+        ModelAdapter runtimeModelAdapter = modelAdapterFactory.create(sessionSummary, effectiveTools);
+        ModelAdapter summaryModelAdapter = modelAdapterFactory.createContextSummaryModel(sessionSummary);
         AgentLoop agentLoop = new AgentLoop(
                 governedToolExecutor,
                 observer,
                 tracePublisher,
                 CliContextCompactionFactory.createContextCompactor(),
-                CliContextCompactionFactory.createInputTokenEstimator(effectiveTools)
+                CliContextCompactionFactory.createInputTokenEstimator(effectiveTools),
+                CliContextCompactionFactory.createStructuredSummaryGenerator(summaryModelAdapter)
         );
         AgentLoopResult result = agentLoop.run(new AgentLoopRequest(
-                modelAdapterFactory.create(sessionSummary, effectiveTools),
+                runtimeModelAdapter,
                 messages,
                 maxSteps,
                 runMode

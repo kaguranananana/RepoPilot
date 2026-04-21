@@ -6,6 +6,8 @@ import com.repopilot.core.agent.AgentLoopRequest;
 import com.repopilot.core.agent.AgentLoopResult;
 import com.repopilot.core.approval.ToolApprovalHandler;
 import com.repopilot.core.context.ContextCompactor;
+import com.repopilot.core.context.StructuredContextSummary;
+import com.repopilot.core.context.StructuredContextSummaryGenerator;
 import com.repopilot.core.model.ConversationMessage;
 import com.repopilot.core.model.MessageRole;
 import com.repopilot.core.model.ModelResponse;
@@ -118,7 +120,8 @@ public final class ContextCostEvalRunner {
                     observer,
                     traceCollector,
                     new ContextCompactor(scenario.policyFor(strategy)),
-                    messages -> tokenEstimator.estimateInputTokens(messages, toolRegistry.list())
+                    messages -> tokenEstimator.estimateInputTokens(messages, toolRegistry.list()),
+                    createStructuredSummaryGenerator(scenario)
             ).run(new AgentLoopRequest(
                     scenario.modelAdapterFactory().create(scenarioWorkspace, strategy),
                     List.of(new ConversationMessage(MessageRole.USER, scenario.prompt())),
@@ -146,6 +149,26 @@ public final class ContextCostEvalRunner {
                     exception
             );
         }
+    }
+
+    private StructuredContextSummaryGenerator createStructuredSummaryGenerator(ContextCostScenario scenario) {
+        List<String> expectedFactSummaries = scenario.expectedFacts().stream()
+                .map(fact -> fact.description() + ": " + fact.requiredText())
+                .toList();
+        return request -> {
+            // context-cost 评测使用脚本模型执行主任务，
+            // 因此摘要生成器也必须是确定性的，不能消耗脚本模型的业务响应序列。
+            return new StructuredContextSummary(
+                    scenario.prompt(),
+                    "CONTEXT_COST_EVAL",
+                    "已触发结构化上下文压缩",
+                    List.of(),
+                    expectedFactSummaries,
+                    List.of(),
+                    List.of("使用场景期望事实校验摘要保真度"),
+                    List.of("继续执行评测脚本")
+            );
+        };
     }
 
     private ContextCostEvalResult.ScenarioComparison compareScenario(

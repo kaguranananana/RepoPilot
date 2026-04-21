@@ -127,12 +127,18 @@ public interface CliRuntimeBootstrap {
                     new WorkspacePermissionPolicy(workspaceRoot),
                     new DiffReviewService(workspaceRoot)
             );
+            List<ToolDefinition> availableTools = toolRegistry.list();
 
             // 再把稳定基础指令、会话指令和运行时 metadata 分块组装，
             // 避免把 sessionId、时间等高频信息直接混进稳定 system prompt 前缀。
             SystemPromptBoundary promptBoundary = systemPromptBuilder.build(
-                    buildDynamicPromptContext(sessionSummary, toolRegistry, maxSteps)
+                    buildDynamicPromptContext(sessionSummary, availableTools, maxSteps)
             );
+
+            // 主模型拿完整工具集合；摘要模型固定不暴露工具，
+            // 避免压缩阶段把“生成 JSON 摘要”变成一次新的工具调用任务。
+            ModelAdapter runtimeModelAdapter = modelAdapterFactory.create(sessionSummary, availableTools);
+            ModelAdapter summaryModelAdapter = modelAdapterFactory.createContextSummaryModel(sessionSummary);
 
             // 最后把拼好的消息列表送进 AgentLoop，
             // 让 CLI 到 core 的一次最小调用真正走过统一运行时入口。
@@ -141,10 +147,11 @@ public interface CliRuntimeBootstrap {
                     AgentLoopObserver.noop(),
                     tracePublisher,
                     CliContextCompactionFactory.createContextCompactor(),
-                    CliContextCompactionFactory.createInputTokenEstimator(toolRegistry.list())
+                    CliContextCompactionFactory.createInputTokenEstimator(availableTools),
+                    CliContextCompactionFactory.createStructuredSummaryGenerator(summaryModelAdapter)
             );
             AgentLoopResult result = agentLoop.run(new AgentLoopRequest(
-                    modelAdapterFactory.create(sessionSummary, toolRegistry.list()),
+                    runtimeModelAdapter,
                     buildMessages(promptBoundary, safePrompt),
                     maxSteps
             ));
@@ -154,7 +161,7 @@ public interface CliRuntimeBootstrap {
 
         private DynamicPromptContext buildDynamicPromptContext(
                 SessionSummary sessionSummary,
-                ToolRegistry toolRegistry,
+                List<ToolDefinition> availableTools,
                 int maxSteps
         ) {
             return new DynamicPromptContext(
@@ -172,7 +179,7 @@ public interface CliRuntimeBootstrap {
                     // maxSteps 来自 CLI 显式预算，
                     // 让真实模型 E2E 可以按任务复杂度提高上限，同时仍保留硬停止边界。
                     "maxSteps=%d".formatted(maxSteps),
-                    toolRegistry.list(),
+                    availableTools,
                     Map.of(
                             "sessionId", sessionSummary.sessionId(),
                             "startedAt", Instant.now(clock).toString()
@@ -219,6 +226,12 @@ public interface CliRuntimeBootstrap {
     interface ModelAdapterFactory {
 
         ModelAdapter create(SessionSummary sessionSummary, List<ToolDefinition> availableTools);
+
+        default ModelAdapter createContextSummaryModel(SessionSummary sessionSummary) {
+            // 结构化摘要模型只需要读消息并输出 JSON，
+            // 因此这里显式传空工具列表，避免模型在压缩阶段生成 tool_calls。
+            return create(sessionSummary, List.of());
+        }
     }
 
     final class EnvironmentBackedModelAdapterFactory implements ModelAdapterFactory {
@@ -261,6 +274,20 @@ public interface CliRuntimeBootstrap {
 
         @Override
         public ModelResponse next(List<ConversationMessage> messages) {
+            if (isStructuredContextSummaryPrompt(messages)) {
+                return new FinalModelResponse("""
+                        {
+                          "user_goal": "继续当前 RepoPilot 任务",
+                          "current_phase": "EXECUTE",
+                          "plan_state": "上下文已压缩",
+                          "touched_files": [],
+                          "important_findings": ["超长高保真历史已由结构化摘要替代"],
+                          "failed_commands": [],
+                          "decisions": ["使用结构化模型摘要降低 prompt token"],
+                          "next_actions": ["基于工作记忆和摘要继续执行"]
+                        }
+                        """);
+            }
             // 从消息尾部反向查找最后一条 USER 消息，
             // 保证我们回显的是“真正送进 runtime 的本轮任务”。
             String latestUserPrompt = extractLatestUserPrompt(messages);
@@ -275,6 +302,12 @@ public interface CliRuntimeBootstrap {
             );
         }
 
+        private boolean isStructuredContextSummaryPrompt(List<ConversationMessage> messages) {
+            return messages.stream()
+                    .anyMatch(message -> message.role() == MessageRole.SYSTEM
+                            && message.content().contains("structured_context_summary_compressor"));
+        }
+
         private String extractLatestUserPrompt(List<ConversationMessage> messages) {
             for (int index = messages.size() - 1; index >= 0; index--) {
                 ConversationMessage message = messages.get(index);
@@ -282,7 +315,13 @@ public interface CliRuntimeBootstrap {
                     return message.content();
                 }
             }
-            throw new IllegalArgumentException("messages must contain at least one USER message.");
+            for (int index = messages.size() - 1; index >= 0; index--) {
+                ConversationMessage message = messages.get(index);
+                if (message.role() == MessageRole.CONTEXT_SUMMARY) {
+                    return "context_summary";
+                }
+            }
+            throw new IllegalArgumentException("messages must contain USER message or CONTEXT_SUMMARY message.");
         }
     }
 }

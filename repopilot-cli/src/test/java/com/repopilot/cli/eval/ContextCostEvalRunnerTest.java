@@ -115,7 +115,7 @@ class ContextCostEvalRunnerTest {
 
         ContextCostEvalResult.ScenarioComparison comparison = result.scenarioComparisons().get(0);
         assertEquals(2, comparison.candidateTokenBudgetCompactionCount());
-        assertEquals(1, comparison.candidateMicrocompactedToolResultCount());
+        assertEquals(0, comparison.candidateMicrocompactedToolResultCount());
         assertEquals(0, comparison.baselineTokenBudgetCompactionCount());
         assertEquals(0, comparison.baselineMicrocompactedToolResultCount());
     }

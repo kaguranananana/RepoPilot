@@ -5,6 +5,9 @@ import com.repopilot.core.context.ContextCompactor;
 import com.repopilot.core.context.ContextCompactionDecision;
 import com.repopilot.core.context.ContextCompactionTrigger;
 import com.repopilot.core.context.ContextInputTokenEstimator;
+import com.repopilot.core.context.StructuredContextSummary;
+import com.repopilot.core.context.StructuredContextSummaryGenerator;
+import com.repopilot.core.context.StructuredContextSummaryRequest;
 import com.repopilot.core.context.WorkingMemory;
 import com.repopilot.core.context.WorkingMemorySnapshot;
 import com.repopilot.core.agent.loop.ToolCallLoopDetectedException;
@@ -44,6 +47,7 @@ public class AgentLoop {
     private final TracePublisher tracePublisher;
     private final ContextCompactor contextCompactor;
     private final ContextInputTokenEstimator contextInputTokenEstimator;
+    private final StructuredContextSummaryGenerator structuredContextSummaryGenerator;
 
     public AgentLoop(ToolRegistry toolRegistry) {
         this(
@@ -89,11 +93,30 @@ public class AgentLoop {
             ContextInputTokenEstimator contextInputTokenEstimator
     ) {
         this(
+                toolRegistry,
+                observer,
+                tracePublisher,
+                contextCompactor,
+                contextInputTokenEstimator,
+                StructuredContextSummaryGenerator.unavailable()
+        );
+    }
+
+    public AgentLoop(
+            ToolRegistry toolRegistry,
+            AgentLoopObserver observer,
+            TracePublisher tracePublisher,
+            ContextCompactor contextCompactor,
+            ContextInputTokenEstimator contextInputTokenEstimator,
+            StructuredContextSummaryGenerator structuredContextSummaryGenerator
+    ) {
+        this(
                 createDefaultGovernedToolExecutor(toolRegistry),
                 observer,
                 tracePublisher,
                 contextCompactor,
-                contextInputTokenEstimator
+                contextInputTokenEstimator,
+                structuredContextSummaryGenerator
         );
     }
 
@@ -133,6 +156,24 @@ public class AgentLoop {
             ContextCompactor contextCompactor,
             ContextInputTokenEstimator contextInputTokenEstimator
     ) {
+        this(
+                governedToolExecutor,
+                observer,
+                tracePublisher,
+                contextCompactor,
+                contextInputTokenEstimator,
+                StructuredContextSummaryGenerator.unavailable()
+        );
+    }
+
+    public AgentLoop(
+            GovernedToolExecutor governedToolExecutor,
+            AgentLoopObserver observer,
+            TracePublisher tracePublisher,
+            ContextCompactor contextCompactor,
+            ContextInputTokenEstimator contextInputTokenEstimator,
+            StructuredContextSummaryGenerator structuredContextSummaryGenerator
+    ) {
         this.governedToolExecutor = Objects.requireNonNull(governedToolExecutor, "governedToolExecutor must not be null.");
         this.observer = Objects.requireNonNull(observer, "observer must not be null.");
         this.tracePublisher = Objects.requireNonNull(tracePublisher, "tracePublisher must not be null.");
@@ -140,6 +181,10 @@ public class AgentLoop {
         this.contextInputTokenEstimator = Objects.requireNonNull(
                 contextInputTokenEstimator,
                 "contextInputTokenEstimator must not be null."
+        );
+        this.structuredContextSummaryGenerator = Objects.requireNonNull(
+                structuredContextSummaryGenerator,
+                "structuredContextSummaryGenerator must not be null."
         );
     }
 
@@ -244,15 +289,18 @@ public class AgentLoop {
             return messages;
         }
 
-        // 这里先算出当前高保真消息总量，
-        // 这样 trace 能准确记录“为什么这一轮会触发压缩”。
-        int highFidelityCount = contextCompactor.policy().countHighFidelityMessages(messages);
-        // 再按策略固定保留最近窗口大小，
-        // 保证压缩结果完全由显式配置决定，而不是运行时猜测。
-        int retainedCount = Math.min(contextCompactor.policy().retainedHighFidelityMessages(), highFidelityCount);
-        // 最后得到本次真正被折叠进结构化摘要的消息数量，
-        // 这个数字同时会进入 trace 和 working memory 的归档元数据。
-        int compactedCount = highFidelityCount - retainedCount;
+        List<ConversationMessage> highFidelityMessages = highFidelityMessages(messages);
+        int highFidelityCount = highFidelityMessages.size();
+        // 先用当前快照跑一次确定性规则压缩，
+        // 再判断规则结果是否仍然超过 token budget。
+        WorkingMemorySnapshot preCompactionSnapshot = workingMemory.snapshot();
+        ContextCompactor.CompactionResult ruleCompactionResult =
+                contextCompactor.compact(messages, preCompactionSnapshot);
+        boolean structuredSummaryApplied =
+                shouldApplyStructuredSummary(ruleCompactionResult.messages(), decision);
+        int compactedCount = structuredSummaryApplied
+                ? highFidelityCount
+                : ruleCompactionResult.compactedHighFidelityMessageCount();
 
         publishContextCompactionStarted(stepNumber, highFidelityCount, compactedCount, decision);
         // 只有真正折叠旧高保真消息时才写入归档元数据，
@@ -261,11 +309,53 @@ public class AgentLoop {
             workingMemory.recordCompaction(decision.trigger().orElseThrow().archiveReason(), compactedCount);
         }
         WorkingMemorySnapshot snapshot = workingMemory.snapshot();
-        // 再用快照去重建消息窗口，
-        // 输出会稳定收敛成“system -> working_memory -> context_summary -> recent messages”。
-        ContextCompactor.CompactionResult compactionResult = contextCompactor.compact(messages, snapshot);
-        publishContextCompactionCompleted(stepNumber, snapshot, compactionResult, decision);
+        ContextCompactor.CompactionResult compactionResult;
+        WorkingMemorySnapshot resultSnapshot = snapshot;
+        if (structuredSummaryApplied) {
+            if (highFidelityMessages.isEmpty()) {
+                throw new IllegalStateException("规则压缩后仍超过 token budget，但没有可供结构化摘要替代的高保真消息。");
+            }
+            // 规则压缩仍超预算时，必须让模型生成结构化摘要；
+            // 摘要成功后再整体替代高保真历史，避免把超长原文继续塞回窗口。
+            StructuredContextSummary structuredSummary = structuredContextSummaryGenerator.generate(
+                    new StructuredContextSummaryRequest(highFidelityMessages, snapshot)
+            );
+            resultSnapshot = structuredSummary.toWorkingMemorySnapshot(snapshot);
+            compactionResult = contextCompactor.compactWithStructuredSummary(messages, resultSnapshot, structuredSummary);
+        } else {
+            // 常规路径仍使用确定性规则压缩，
+            // 输出稳定收敛成“system -> working_memory -> context_summary -> recent messages”。
+            compactionResult = contextCompactor.compact(messages, snapshot);
+        }
+        publishContextCompactionCompleted(stepNumber, resultSnapshot, compactionResult, decision, structuredSummaryApplied);
         return new ArrayList<>(compactionResult.messages());
+    }
+
+    private boolean shouldApplyStructuredSummary(
+            List<ConversationMessage> ruleCompactedMessages,
+            ContextCompactionDecision decision
+    ) {
+        if (decision.trigger().orElseThrow() != ContextCompactionTrigger.TOKEN_BUDGET) {
+            return false;
+        }
+        int estimate = contextInputTokenEstimator.estimateInputTokens(List.copyOf(ruleCompactedMessages));
+        if (estimate < 0) {
+            throw new IllegalStateException("规则压缩后的输入 token 估算结果不能为负数。");
+        }
+        return estimate > decision.maxInputTokens().orElseThrow();
+    }
+
+    private List<ConversationMessage> highFidelityMessages(List<ConversationMessage> messages) {
+        List<ConversationMessage> highFidelityMessages = new ArrayList<>();
+        for (ConversationMessage message : messages) {
+            if (message.role() == MessageRole.SYSTEM
+                    || message.role() == MessageRole.WORKING_MEMORY
+                    || message.role() == MessageRole.CONTEXT_SUMMARY) {
+                continue;
+            }
+            highFidelityMessages.add(message);
+        }
+        return List.copyOf(highFidelityMessages);
     }
 
     private ContextCompactionDecision evaluateContextCompaction(List<ConversationMessage> messages) {
@@ -311,7 +401,8 @@ public class AgentLoop {
             int stepNumber,
             WorkingMemorySnapshot snapshot,
             ContextCompactor.CompactionResult compactionResult,
-            ContextCompactionDecision decision
+            ContextCompactionDecision decision,
+            boolean structuredSummaryApplied
     ) {
         Map<String, String> metadata = compactionMetadata(
                 stepNumber,
@@ -325,6 +416,7 @@ public class AgentLoop {
                 "microcompactedToolResultCount",
                 Integer.toString(compactionResult.microcompactedToolResultCount())
         );
+        metadata.put("structuredSummaryApplied", Boolean.toString(structuredSummaryApplied));
 
         tracePublisher.publish(new TracePublisher.TraceEvent(
                 TraceEventType.CONTEXT_COMPACTION_COMPLETED,

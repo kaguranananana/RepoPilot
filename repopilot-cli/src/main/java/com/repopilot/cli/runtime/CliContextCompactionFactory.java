@@ -3,6 +3,9 @@ package com.repopilot.cli.runtime;
 import com.repopilot.core.context.ContextCompactionPolicy;
 import com.repopilot.core.context.ContextCompactor;
 import com.repopilot.core.context.ContextInputTokenEstimator;
+import com.repopilot.core.context.ModelStructuredContextSummaryGenerator;
+import com.repopilot.core.context.StructuredContextSummaryGenerator;
+import com.repopilot.core.model.ModelAdapter;
 import com.repopilot.core.tool.ToolDefinition;
 import java.util.List;
 import java.util.Objects;
@@ -41,5 +44,13 @@ public final class CliContextCompactionFactory {
         );
         ModelInputTokenEstimator tokenEstimator = new JTokkitModelInputTokenEstimator(TOKEN_ENCODING);
         return messages -> tokenEstimator.estimateInputTokens(messages, safeAvailableTools);
+    }
+
+    public static StructuredContextSummaryGenerator createStructuredSummaryGenerator(ModelAdapter modelAdapter) {
+        // 结构化摘要模型在 CLI 装配层固定不暴露工具，
+        // 真正的禁用工具能力由 ModelAdapterFactory.createContextSummaryModel 保证。
+        return new ModelStructuredContextSummaryGenerator(
+                Objects.requireNonNull(modelAdapter, "modelAdapter must not be null.")
+        );
     }
 }

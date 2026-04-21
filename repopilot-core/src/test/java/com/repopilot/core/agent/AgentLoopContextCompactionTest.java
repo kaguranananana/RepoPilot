@@ -6,6 +6,9 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.repopilot.core.context.ContextCompactionPolicy;
 import com.repopilot.core.context.ContextCompactor;
+import com.repopilot.core.context.StructuredContextSummary;
+import com.repopilot.core.context.StructuredContextSummaryGenerator;
+import com.repopilot.core.context.StructuredContextSummaryRequest;
 import com.repopilot.core.model.ConversationMessage;
 import com.repopilot.core.model.FinalModelResponse;
 import com.repopilot.core.model.MessageRole;
@@ -92,7 +95,9 @@ class AgentLoopContextCompactionTest {
                 AgentLoopObserver.noop(),
                 tracePublisher,
                 new ContextCompactor(new ContextCompactionPolicy(100, 2, 2, 50, 10, 10)),
-                messages -> messages.size() >= 3 ? 31 : 10
+                messages -> messages.stream().anyMatch(message -> message.role() == MessageRole.WORKING_MEMORY)
+                        ? 10
+                        : messages.size() >= 3 ? 31 : 10
         ).run(new AgentLoopRequest(
                 modelAdapter,
                 List.of(new ConversationMessage(MessageRole.USER, "读取大文件")),
@@ -108,6 +113,45 @@ class AgentLoopContextCompactionTest {
         assertEquals("TOKEN_BUDGET", completed.metadata().get("trigger"));
         assertEquals("31", completed.metadata().get("estimatedInputTokens"));
         assertEquals("30", completed.metadata().get("maxInputTokens"));
+    }
+
+    @Test
+    void shouldUseStructuredModelSummaryWhenRuleCompactionStillExceedsTokenBudget() {
+        RecordingStructuredSummaryGenerator summaryGenerator = new RecordingStructuredSummaryGenerator();
+        RecordingTracePublisher tracePublisher = new RecordingTracePublisher();
+        RecordingModelAdapter modelAdapter = new RecordingModelAdapter(List.of(new FinalModelResponse("继续完成任务")));
+        String largePrompt = "分析超长上下文：" + "A".repeat(20_000);
+
+        AgentLoopResult result = new AgentLoop(
+                new ToolRegistry(),
+                AgentLoopObserver.noop(),
+                tracePublisher,
+                new ContextCompactor(new ContextCompactionPolicy(10_000, 8, 1, 5_000, 800, 700)),
+                messages -> messages.stream().anyMatch(message -> message.role() == MessageRole.CONTEXT_SUMMARY) ? 900 : 4_001,
+                summaryGenerator
+        ).run(new AgentLoopRequest(
+                modelAdapter,
+                List.of(new ConversationMessage(MessageRole.USER, largePrompt)),
+                2
+        ));
+
+        List<ConversationMessage> firstModelCall = modelAdapter.calls().get(0);
+
+        assertEquals("继续完成任务", result.finalAnswer());
+        assertEquals(1, summaryGenerator.requests().size());
+        assertTrue(firstModelCall.stream()
+                .filter(message -> message.role() == MessageRole.CONTEXT_SUMMARY)
+                .findFirst()
+                .orElseThrow()
+                .content()
+                .contains("model_context_summary"));
+        assertFalse(firstModelCall.stream().anyMatch(message -> message.content().contains("A".repeat(200))));
+        TracePublisher.TraceEvent completed = tracePublisher.events().stream()
+                .filter(event -> event.type() == TraceEventType.CONTEXT_COMPACTION_COMPLETED)
+                .findFirst()
+                .orElseThrow();
+        assertEquals("true", completed.metadata().get("structuredSummaryApplied"));
+        assertEquals("1", completed.metadata().get("compactedMessageCount"));
     }
 
     private static final class RecordingTracePublisher implements TracePublisher {
@@ -144,6 +188,30 @@ class AgentLoopContextCompactionTest {
 
         private List<List<ConversationMessage>> calls() {
             return calls;
+        }
+    }
+
+    private static final class RecordingStructuredSummaryGenerator implements StructuredContextSummaryGenerator {
+
+        private final List<StructuredContextSummaryRequest> requests = new ArrayList<>();
+
+        @Override
+        public StructuredContextSummary generate(StructuredContextSummaryRequest request) {
+            requests.add(request);
+            return new StructuredContextSummary(
+                    "分析超长上下文",
+                    "EXECUTE",
+                    "已进入执行阶段",
+                    List.of("README.md"),
+                    List.of("旧历史已压缩为结构化摘要"),
+                    List.of(),
+                    List.of("规则压缩不足时使用模型摘要"),
+                    List.of("继续完成任务")
+            );
+        }
+
+        private List<StructuredContextSummaryRequest> requests() {
+            return requests;
         }
     }
 }

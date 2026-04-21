@@ -82,6 +82,56 @@ public final class ContextCompactor {
         );
     }
 
+    public CompactionResult compactWithStructuredSummary(
+            List<ConversationMessage> messages,
+            WorkingMemorySnapshot snapshot,
+            StructuredContextSummary structuredSummary
+    ) {
+        Objects.requireNonNull(messages, "messages must not be null.");
+        Objects.requireNonNull(snapshot, "snapshot must not be null.");
+        Objects.requireNonNull(structuredSummary, "structuredSummary must not be null.");
+
+        List<ConversationMessage> systemMessages = new ArrayList<>();
+        int highFidelityMessageCount = 0;
+        for (ConversationMessage message : messages) {
+            if (message.role() == MessageRole.SYSTEM) {
+                systemMessages.add(message);
+                continue;
+            }
+            if (message.role() != MessageRole.WORKING_MEMORY && message.role() != MessageRole.CONTEXT_SUMMARY) {
+                highFidelityMessageCount += 1;
+            }
+        }
+
+        // 结构化模型摘要路径用于规则压缩仍超 token budget 的场景，
+        // 因此这里不再保留最近高保真窗口，而是用模型摘要整体替代旧历史。
+        List<ConversationMessage> compactedMessages = new ArrayList<>(systemMessages);
+        compactedMessages.add(snapshot.toWorkingMemoryMessage());
+        compactedMessages.add(ConversationMessage.contextSummary(renderStructuredContextSummary(
+                snapshot,
+                structuredSummary
+        )));
+
+        return new CompactionResult(
+                List.copyOf(compactedMessages),
+                highFidelityMessageCount,
+                0
+        );
+    }
+
+    private String renderStructuredContextSummary(
+            WorkingMemorySnapshot snapshot,
+            StructuredContextSummary structuredSummary
+    ) {
+        if (!snapshot.hasContextSummaryContent()) {
+            return structuredSummary.renderForContextSummary();
+        }
+        return snapshot.renderContextSummary()
+                + System.lineSeparator()
+                + System.lineSeparator()
+                + structuredSummary.renderForContextSummary();
+    }
+
     private MicrocompactResult microcompactToolResults(List<ConversationMessage> retainedMessages) {
         // 先收集 retained window 内的 assistant tool_calls，
         // 后续 TOOL 消息才能用 tool_call_id 找回工具名和参数。
