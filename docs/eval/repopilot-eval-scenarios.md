@@ -3,7 +3,7 @@
 本文档定义 Task 14 的最小评估链路。当前评估入口支持两类运行口径：
 
 - `SCRIPTED_RUNTIME`：用确定性脚本模型驱动真实 `AgentLoop`、工具注册、权限策略、审批处理、diff review 和 trace 发布链路，作为稳定回归基线。
-- `REAL_MODEL_PROVIDER`：在独立场景集上使用真实 OpenAI 兼容模型 provider，评估真实模型与 runtime 主链路的联动效果。
+- `REAL_MODEL_PROVIDER`：在独立场景集上使用真实模型 provider（当前支持 `openai-compatible` 与 `anthropic`），评估真实模型与 runtime 主链路的联动效果。
 
 两类口径必须使用独立场景和独立报告，不能混算成功率。
 
@@ -48,13 +48,19 @@ java -cp "<cli-classpath>" com.repopilot.cli.RepoPilotCliApplication context-cos
 - Markdown 报告：`target/repopilot-context-cost-real-usage-report.md`
 - 计量口径：`REAL_USAGE`
 
-真实模型评估前需要显式设置：
+真实模型评估前需要显式设置；两组选项二选一：
 
 ```bash
 REPOPILOT_MODEL_PROVIDER=openai-compatible
 OPENAI_COMPATIBLE_API_KEY=your-api-key
 OPENAI_COMPATIBLE_BASE_URL=https://your-openai-compatible-endpoint/v1
 OPENAI_COMPATIBLE_MODEL=your-model-id
+
+# 或
+REPOPILOT_MODEL_PROVIDER=anthropic
+ANTHROPIC_API_KEY=your-api-key
+ANTHROPIC_BASE_URL=https://your-anthropic-endpoint
+ANTHROPIC_MODEL=your-model-id
 ```
 
 如果希望直接运行真实模型评估，可显式执行：
@@ -85,7 +91,7 @@ java -cp "<cli-classpath>" com.repopilot.cli.RepoPilotCliApplication eval --runt
 - `expectedFactCount` / `candidateRetainedFactCount`：场景声明的关键事实数量，以及候选策略压缩后 prompt 中仍可见的事实数量。
 - `candidateFactRetentionRate`：候选策略压缩后的关键事实保留率。
 
-`ESTIMATED_INPUT` 使用 JTokkit 对即将发送给模型的 messages 和 tools 做本地计数；`REAL_USAGE` 使用 OpenAI-compatible 响应中的 `usage.prompt_tokens`，缺失 usage 时直接失败。
+`ESTIMATED_INPUT` 使用 JTokkit 对即将发送给模型的 messages 和 tools 做本地计数；`REAL_USAGE` 会按 provider 解析真实 usage：`openai-compatible` 读取 `usage.prompt_tokens` / `usage.completion_tokens` / `usage.total_tokens`，`anthropic` 读取 `usage.input_tokens` / `usage.output_tokens`；缺失必需字段时直接失败。
 
 报告同时记录逐场景诊断字段：
 
@@ -124,6 +130,6 @@ java -cp "<cli-classpath>" com.repopilot.cli.RepoPilotCliApplication eval --runt
 - 评估链路复用主 runtime，不改写 `AgentLoop` 语义。
 - 每个场景运行前都会重建自己的子工作区，避免上次评估残留影响结果。
 - 评估场景里的写文件、补丁和命令执行使用固定审批通过，因为这些场景运行在受控临时工作区内。
-- `REAL_MODEL_PROVIDER` 当前只支持 `openai-compatible` 配置；如果 `REPOPILOT_MODEL_PROVIDER` 不是该值，命令会直接报错暴露配置问题。
+- `REAL_MODEL_PROVIDER` 当前支持 `openai-compatible` 和 `anthropic`；如果 `REPOPILOT_MODEL_PROVIDER` 不是这两个值之一，命令会直接报错暴露配置问题。
 - 真实模型评估仍然不是交互式 REPL 端到端体验测试；它验证的是“真实模型 + 固定审批通过的 eval runtime”。
 - 报告使用 JSON，是为了支持不同版本之间做结构化对比。

@@ -67,6 +67,7 @@ public interface CliRuntimeBootstrap {
      * 默认 bootstrap 使用当前最小 runtime 组件完成一次本地运行。
      * 当 provider=bootstrap 时，它会走确定性假模型；
      * 当 provider=openai-compatible 时，它会走真实模型调用。
+     * 当 provider=anthropic 时，它会走真实 Anthropic Messages 调用。
      */
     final class DefaultCliRuntimeBootstrap implements CliRuntimeBootstrap {
 
@@ -250,6 +251,12 @@ public interface CliRuntimeBootstrap {
             return switch (modelConfig.provider()) {
                 case "bootstrap" -> new BootstrapModelAdapter(sessionSummary);
                 case "openai-compatible" -> new OpenAiCompatibleChatModelAdapter(
+                        modelConfig.apiKey(),
+                        modelConfig.baseUrl(),
+                        modelConfig.modelName(),
+                        availableTools
+                );
+                case "anthropic" -> new AnthropicChatModelAdapter(
                         modelConfig.apiKey(),
                         modelConfig.baseUrl(),
                         modelConfig.modelName(),

@@ -34,6 +34,21 @@ class CliModelConfigTest {
     }
 
     @Test
+    void shouldResolveAnthropicConfigFromEnvironment() {
+        CliModelConfig config = CliModelConfig.fromEnvironment(Map.of(
+                "REPOPILOT_MODEL_PROVIDER", "anthropic",
+                "ANTHROPIC_API_KEY", "test-key",
+                "ANTHROPIC_BASE_URL", "https://gateway.example.com",
+                "ANTHROPIC_MODEL", "kimi-k2.6"
+        ));
+
+        assertEquals("anthropic", config.provider());
+        assertEquals("test-key", config.apiKey());
+        assertEquals("https://gateway.example.com", config.baseUrl());
+        assertEquals("kimi-k2.6", config.modelName());
+    }
+
+    @Test
     void shouldRejectOpenAiCompatibleProviderWithoutApiKey() {
         IllegalArgumentException exception = assertThrows(
                 IllegalArgumentException.class,
@@ -80,6 +95,57 @@ class CliModelConfigTest {
 
         assertEquals(
                 "OPENAI_COMPATIBLE_MODEL must not be blank when provider=openai-compatible.",
+                exception.getMessage()
+        );
+    }
+
+    @Test
+    void shouldRejectAnthropicProviderWithoutApiKey() {
+        IllegalArgumentException exception = assertThrows(
+                IllegalArgumentException.class,
+                () -> CliModelConfig.fromEnvironment(Map.of(
+                        "REPOPILOT_MODEL_PROVIDER", "anthropic",
+                        "ANTHROPIC_BASE_URL", "https://gateway.example.com",
+                        "ANTHROPIC_MODEL", "kimi-k2.6"
+                ))
+        );
+
+        assertEquals(
+                "ANTHROPIC_API_KEY must not be blank when provider=anthropic.",
+                exception.getMessage()
+        );
+    }
+
+    @Test
+    void shouldRejectAnthropicProviderWithoutBaseUrl() {
+        IllegalArgumentException exception = assertThrows(
+                IllegalArgumentException.class,
+                () -> CliModelConfig.fromEnvironment(Map.of(
+                        "REPOPILOT_MODEL_PROVIDER", "anthropic",
+                        "ANTHROPIC_API_KEY", "test-key",
+                        "ANTHROPIC_MODEL", "kimi-k2.6"
+                ))
+        );
+
+        assertEquals(
+                "ANTHROPIC_BASE_URL must not be blank when provider=anthropic.",
+                exception.getMessage()
+        );
+    }
+
+    @Test
+    void shouldRejectAnthropicProviderWithoutModel() {
+        IllegalArgumentException exception = assertThrows(
+                IllegalArgumentException.class,
+                () -> CliModelConfig.fromEnvironment(Map.of(
+                        "REPOPILOT_MODEL_PROVIDER", "anthropic",
+                        "ANTHROPIC_API_KEY", "test-key",
+                        "ANTHROPIC_BASE_URL", "https://gateway.example.com"
+                ))
+        );
+
+        assertEquals(
+                "ANTHROPIC_MODEL must not be blank when provider=anthropic.",
                 exception.getMessage()
         );
     }

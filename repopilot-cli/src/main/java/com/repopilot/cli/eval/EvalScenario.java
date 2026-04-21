@@ -1,5 +1,6 @@
 package com.repopilot.cli.eval;
 
+import com.repopilot.cli.runtime.AnthropicChatModelAdapter;
 import com.repopilot.cli.runtime.CliModelConfig;
 import com.repopilot.cli.runtime.OpenAiCompatibleChatModelAdapter;
 import com.repopilot.core.agent.AgentLoopResult;
@@ -521,12 +522,21 @@ public record EvalScenario(
                 workspaceRoot,
                 SkillLoader.createDefault(workspaceRoot, workspaceRoot.resolve("home"))
         );
-        return new OpenAiCompatibleChatModelAdapter(
-                modelConfig.apiKey(),
-                modelConfig.baseUrl(),
-                modelConfig.modelName(),
-                toolRegistry.list()
-        );
+        return switch (modelConfig.provider()) {
+            case "openai-compatible" -> new OpenAiCompatibleChatModelAdapter(
+                    modelConfig.apiKey(),
+                    modelConfig.baseUrl(),
+                    modelConfig.modelName(),
+                    toolRegistry.list()
+            );
+            case "anthropic" -> new AnthropicChatModelAdapter(
+                    modelConfig.apiKey(),
+                    modelConfig.baseUrl(),
+                    modelConfig.modelName(),
+                    toolRegistry.list()
+            );
+            default -> throw new IllegalStateException("Unsupported real model provider: " + modelConfig.provider());
+        };
     }
 
     private static void writeFile(Path workspaceRoot, String relativePath, String content) throws IOException {
@@ -631,8 +641,11 @@ public record EvalScenario(
 
     private static CliModelConfig requireRealModelConfig(CliModelConfig modelConfig) {
         CliModelConfig safeModelConfig = Objects.requireNonNull(modelConfig, "modelConfig must not be null.");
-        if (!"openai-compatible".equals(safeModelConfig.provider())) {
-            throw new IllegalArgumentException("REAL_MODEL_PROVIDER 评估要求 REPOPILOT_MODEL_PROVIDER=openai-compatible。");
+        if (!"openai-compatible".equals(safeModelConfig.provider())
+                && !"anthropic".equals(safeModelConfig.provider())) {
+            throw new IllegalArgumentException(
+                    "REAL_MODEL_PROVIDER 评估要求 REPOPILOT_MODEL_PROVIDER 为 openai-compatible 或 anthropic。"
+            );
         }
         return safeModelConfig;
     }

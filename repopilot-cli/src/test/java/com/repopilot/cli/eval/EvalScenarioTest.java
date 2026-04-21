@@ -27,6 +27,22 @@ class EvalScenarioTest {
     }
 
     @Test
+    void shouldCreateDefaultRealModelScenariosForAnthropicProvider() {
+        List<EvalScenario> scenarios = EvalScenario.defaultRealModelScenarios(new CliModelConfig(
+                "anthropic",
+                "test-key",
+                "https://example.com",
+                "kimi-k2.6"
+        ));
+
+        assertEquals(
+                List.of("code-search", "file-read", "patch-edit", "command-validation", "search-read-patch-command"),
+                scenarios.stream().map(EvalScenario::id).toList()
+        );
+        assertTrue(scenarios.stream().allMatch(scenario -> scenario.runtimeKind() == EvalScenario.RuntimeKind.REAL_MODEL_PROVIDER));
+    }
+
+    @Test
     void shouldRejectNonRealModelConfigWhenBuildingDefaultRealModelScenarios() {
         IllegalArgumentException exception = assertThrows(
                 IllegalArgumentException.class,
@@ -39,7 +55,7 @@ class EvalScenarioTest {
         );
 
         assertEquals(
-                "REAL_MODEL_PROVIDER 评估要求 REPOPILOT_MODEL_PROVIDER=openai-compatible。",
+                "REAL_MODEL_PROVIDER 评估要求 REPOPILOT_MODEL_PROVIDER 为 openai-compatible 或 anthropic。",
                 exception.getMessage()
         );
     }

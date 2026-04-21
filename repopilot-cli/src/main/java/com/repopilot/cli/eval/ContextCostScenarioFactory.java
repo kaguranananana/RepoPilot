@@ -1,5 +1,6 @@
 package com.repopilot.cli.eval;
 
+import com.repopilot.cli.runtime.AnthropicChatModelAdapter;
 import com.repopilot.cli.runtime.CliModelConfig;
 import com.repopilot.cli.runtime.OpenAiCompatibleChatModelAdapter;
 import com.repopilot.core.context.ContextCompactionPolicy;
@@ -92,12 +93,12 @@ public final class ContextCostScenarioFactory {
     private static ContextCostScenario realSearchReadBatchScenario(CliModelConfig modelConfig) {
         return new ContextCostScenario(
                 "batch-read",
-                "真实模型批量读取",
+                "真实模型多文档批量读取",
                 """
                         请严格按顺序完成：
-                        1) 依次使用 read_file 读取 notes/alpha.md、notes/beta.md、notes/gamma.md；
+                        1) 依次使用 read_file 读取 notes/alpha.md、notes/beta.md、notes/gamma.md、notes/delta.md、notes/epsilon.md、notes/zeta.md；
                         2) 不要搜索，不要运行命令，不要修改文件；
-                        3) 最后用一句话汇报已读取 3 个批量文档。
+                        3) 最后用一句话汇报已读取 6 个批量文档。
                         """,
                 18,
                 NO_COMPACTION_POLICY,
@@ -108,9 +109,12 @@ public final class ContextCostScenarioFactory {
                     // 这个场景只验证固定三文件的连续读取，
                     // 尽量减少工具选择分岔带来的模型波动，
                     // 让观测重点集中在压缩前后的 token 差异。
-                    requireToolMessage(execution, "# Alpha Batch");
-                    requireToolMessage(execution, "# Beta Batch");
-                    requireToolMessage(execution, "# Gamma Batch");
+                    requireReadFileEvidence(execution, "notes/alpha.md", "# Alpha Batch");
+                    requireReadFileEvidence(execution, "notes/beta.md", "# Beta Batch");
+                    requireReadFileEvidence(execution, "notes/gamma.md", "# Gamma Batch");
+                    requireReadFileEvidence(execution, "notes/delta.md", "# Delta Batch");
+                    requireReadFileEvidence(execution, "notes/epsilon.md", "# Epsilon Batch");
+                    requireReadFileEvidence(execution, "notes/zeta.md", "# Zeta Batch");
                     requireNonBlankFinalAnswer(execution);
                 },
                 searchReadBatchExpectedFacts()
@@ -120,12 +124,12 @@ public final class ContextCostScenarioFactory {
     private static ContextCostScenario realSpecReviewReadScenario(CliModelConfig modelConfig) {
         return new ContextCostScenario(
                 "spec-review-read",
-                "真实模型规格阅读",
+                "真实模型多规格阅读",
                 """
                         请严格按顺序完成：
-                        1) 依次使用 read_file 读取 specs/runtime.md、specs/context.md、specs/skills.md；
+                        1) 依次使用 read_file 读取 specs/runtime.md、specs/context.md、specs/skills.md、specs/tools.md、specs/tracing.md；
                         2) 不要搜索，不要运行命令，不要修改文件；
-                        3) 最后用一句话汇报已读取 3 份说明文档。
+                        3) 最后用一句话汇报已读取 5 份说明文档。
                         """,
                 18,
                 NO_COMPACTION_POLICY,
@@ -136,9 +140,11 @@ public final class ContextCostScenarioFactory {
                     // 这个场景不依赖搜索或修改能力，
                     // 只验证长文档连续读取是否完成，
                     // 便于把观测重点聚焦到上下文压缩收益本身。
-                    requireToolMessage(execution, "# Runtime Spec");
-                    requireToolMessage(execution, "# Context Spec");
-                    requireToolMessage(execution, "# Skills Spec");
+                    requireReadFileEvidence(execution, "specs/runtime.md", "# Runtime Spec");
+                    requireReadFileEvidence(execution, "specs/context.md", "# Context Spec");
+                    requireReadFileEvidence(execution, "specs/skills.md", "# Skills Spec");
+                    requireReadFileEvidence(execution, "specs/tools.md", "# Tools Spec");
+                    requireReadFileEvidence(execution, "specs/tracing.md", "# Tracing Spec");
                     requireNonBlankFinalAnswer(execution);
                 },
                 specReviewExpectedFacts()
@@ -161,7 +167,10 @@ public final class ContextCostScenarioFactory {
         return List.of(
                 new ContextCostFactExpectation("alpha", "批量文档 Alpha", "notes/alpha.md"),
                 new ContextCostFactExpectation("beta", "批量文档 Beta", "notes/beta.md"),
-                new ContextCostFactExpectation("gamma", "批量文档 Gamma", "notes/gamma.md")
+                new ContextCostFactExpectation("gamma", "批量文档 Gamma", "notes/gamma.md"),
+                new ContextCostFactExpectation("delta", "批量文档 Delta", "notes/delta.md"),
+                new ContextCostFactExpectation("epsilon", "批量文档 Epsilon", "notes/epsilon.md"),
+                new ContextCostFactExpectation("zeta", "批量文档 Zeta", "notes/zeta.md")
         );
     }
 
@@ -170,9 +179,13 @@ public final class ContextCostScenarioFactory {
                 new ContextCostFactExpectation("runtime", "运行时规格", "# Runtime Spec"),
                 new ContextCostFactExpectation("context", "上下文规格", "# Context Spec"),
                 new ContextCostFactExpectation("skills", "技能规格", "# Skills Spec"),
+                new ContextCostFactExpectation("tools", "工具规格", "# Tools Spec"),
+                new ContextCostFactExpectation("tracing", "追踪规格", "# Tracing Spec"),
                 new ContextCostFactExpectation("runtime-file", "运行时规格文件", "specs/runtime.md"),
                 new ContextCostFactExpectation("context-file", "上下文规格文件", "specs/context.md"),
-                new ContextCostFactExpectation("skills-file", "技能规格文件", "specs/skills.md")
+                new ContextCostFactExpectation("skills-file", "技能规格文件", "specs/skills.md"),
+                new ContextCostFactExpectation("tools-file", "工具规格文件", "specs/tools.md"),
+                new ContextCostFactExpectation("tracing-file", "追踪规格文件", "specs/tracing.md")
         );
     }
 
@@ -192,19 +205,43 @@ public final class ContextCostScenarioFactory {
                 workspace.resolve("notes/alpha.md"),
                 "# Alpha Batch",
                 "context-batch-marker-20260421",
-                "ALPHA"
+                "ALPHA",
+                1_800
         );
         writeLargeMarkdown(
                 workspace.resolve("notes/beta.md"),
                 "# Beta Batch",
                 "context-batch-marker-20260421",
-                "BETA"
+                "BETA",
+                1_800
         );
         writeLargeMarkdown(
                 workspace.resolve("notes/gamma.md"),
                 "# Gamma Batch",
                 "context-batch-marker-20260421",
-                "GAMMA"
+                "GAMMA",
+                1_800
+        );
+        writeLargeMarkdown(
+                workspace.resolve("notes/delta.md"),
+                "# Delta Batch",
+                "context-batch-marker-20260421",
+                "DELTA",
+                1_800
+        );
+        writeLargeMarkdown(
+                workspace.resolve("notes/epsilon.md"),
+                "# Epsilon Batch",
+                "context-batch-marker-20260421",
+                "EPSILON",
+                1_800
+        );
+        writeLargeMarkdown(
+                workspace.resolve("notes/zeta.md"),
+                "# Zeta Batch",
+                "context-batch-marker-20260421",
+                "ZETA",
+                1_800
         );
     }
 
@@ -214,19 +251,36 @@ public final class ContextCostScenarioFactory {
                 workspace.resolve("specs/runtime.md"),
                 "# Runtime Spec",
                 "runtime-mode=execute",
-                "RUNTIME"
+                "RUNTIME",
+                1_700
         );
         writeLargeMarkdown(
                 workspace.resolve("specs/context.md"),
                 "# Context Spec",
                 "context-layer=summary",
-                "CONTEXT"
+                "CONTEXT",
+                1_700
         );
         writeLargeMarkdown(
                 workspace.resolve("specs/skills.md"),
                 "# Skills Spec",
                 "skill-mode=allowed-tools",
-                "SKILLS"
+                "SKILLS",
+                1_700
+        );
+        writeLargeMarkdown(
+                workspace.resolve("specs/tools.md"),
+                "# Tools Spec",
+                "tool-governance=approval",
+                "TOOLS",
+                1_700
+        );
+        writeLargeMarkdown(
+                workspace.resolve("specs/tracing.md"),
+                "# Tracing Spec",
+                "trace-mode=audit",
+                "TRACING",
+                1_700
         );
     }
 
@@ -234,13 +288,14 @@ public final class ContextCostScenarioFactory {
             Path filePath,
             String title,
             String marker,
-            String repeatedToken
+            String repeatedToken,
+            int repeatCount
     ) throws IOException {
-        // 这里把正文长度控制在“足以触发压缩、但不会把真实评测成本拉得过高”的区间。
+        // 这里把正文长度控制在“能稳定触发压缩、但不会把真实评测成本拉得过高”的区间。
         String content = title
                 + "\n"
                 + "marker=" + marker + "\n"
-                + (repeatedToken + " ").repeat(500)
+                + (repeatedToken + " ").repeat(repeatCount)
                 + "\n";
         Files.writeString(filePath, content);
     }
@@ -260,12 +315,21 @@ public final class ContextCostScenarioFactory {
                 workspaceRoot,
                 SkillLoader.createDefault(workspaceRoot, workspaceRoot.resolve("home"))
         );
-        return new OpenAiCompatibleChatModelAdapter(
-                modelConfig.apiKey(),
-                modelConfig.baseUrl(),
-                modelConfig.modelName(),
-                toolRegistry.list()
-        );
+        return switch (modelConfig.provider()) {
+            case "openai-compatible" -> new OpenAiCompatibleChatModelAdapter(
+                    modelConfig.apiKey(),
+                    modelConfig.baseUrl(),
+                    modelConfig.modelName(),
+                    toolRegistry.list()
+            );
+            case "anthropic" -> new AnthropicChatModelAdapter(
+                    modelConfig.apiKey(),
+                    modelConfig.baseUrl(),
+                    modelConfig.modelName(),
+                    toolRegistry.list()
+            );
+            default -> throw new IllegalStateException("Unsupported real model provider: " + modelConfig.provider());
+        };
     }
 
     private static void requireFinalAnswerContains(ContextCostScenario.ScenarioExecution execution, String expectedText) {
@@ -282,19 +346,27 @@ public final class ContextCostScenarioFactory {
         }
     }
 
-    private static void requireToolMessage(ContextCostScenario.ScenarioExecution execution, String expectedText) {
+    private static void requireReadFileEvidence(
+            ContextCostScenario.ScenarioExecution execution,
+            String expectedPath,
+            String expectedContent
+    ) {
         boolean found = execution.agentLoopResult().messages().stream()
                 .filter(message -> message.role() == MessageRole.TOOL)
-                .anyMatch(message -> message.content().contains(expectedText));
+                .anyMatch(message -> message.content().contains(expectedContent)
+                        || message.content().contains("path=" + expectedPath));
         if (!found) {
-            throw new IllegalStateException("未观察到工具消息包含: " + expectedText);
+            throw new IllegalStateException("未观察到 read_file 结果证据: " + expectedPath);
         }
     }
 
     private static CliModelConfig requireRealModelConfig(CliModelConfig modelConfig) {
         CliModelConfig safeModelConfig = Objects.requireNonNull(modelConfig, "modelConfig must not be null.");
-        if (!"openai-compatible".equals(safeModelConfig.provider())) {
-            throw new IllegalArgumentException("REAL_USAGE context-cost 评测要求 REPOPILOT_MODEL_PROVIDER=openai-compatible。");
+        if (!"openai-compatible".equals(safeModelConfig.provider())
+                && !"anthropic".equals(safeModelConfig.provider())) {
+            throw new IllegalArgumentException(
+                    "REAL_USAGE context-cost 评测要求 REPOPILOT_MODEL_PROVIDER 为 openai-compatible 或 anthropic。"
+            );
         }
         return safeModelConfig;
     }

@@ -83,10 +83,16 @@ REPOPILOT_WORKSPACE_ID=coding-agent
 REPOPILOT_DATABASE_URL=jdbc:postgresql://127.0.0.1:15432/repopilot
 REPOPILOT_DATABASE_USERNAME=repopilot
 REPOPILOT_DATABASE_PASSWORD=repopilot
+# OpenAI-compatible provider
 REPOPILOT_MODEL_PROVIDER=openai-compatible
 OPENAI_COMPATIBLE_API_KEY=your-api-key
 OPENAI_COMPATIBLE_BASE_URL=https://your-openai-compatible-endpoint/v1
 OPENAI_COMPATIBLE_MODEL=your-model-id
+# 或改用 Anthropic Messages provider
+# REPOPILOT_MODEL_PROVIDER=anthropic
+# ANTHROPIC_API_KEY=your-api-key
+# ANTHROPIC_BASE_URL=https://your-anthropic-endpoint
+# ANTHROPIC_MODEL=your-model-id
 # 可选
 REPOPILOT_TRACE_LEVEL=summary
 REPOPILOT_MAX_STEPS=12
@@ -180,7 +186,7 @@ java -cp "$CP" com.repopilot.cli.RepoPilotCliApplication context-cost
 
 报告会同时输出累计输入 token、峰值输入 token、候选策略压缩次数、其中由 `TOKEN_BUDGET` 触发的次数、被规则化 microcompact 压缩的工具结果数量，以及压缩后 prompt 对关键事实的保留率。
 
-真实 usage 口径会调用 OpenAI-compatible provider，并要求每次响应都返回 `usage.prompt_tokens`；如果 provider 不返回 usage，评测会直接失败：
+真实 usage 口径会调用真实模型 provider。`openai-compatible` 要求响应返回 `usage.prompt_tokens` / `usage.completion_tokens` / `usage.total_tokens`，`anthropic` 要求响应返回 `usage.input_tokens` / `usage.output_tokens`；如果 provider 不返回所需 usage，评测会直接失败：
 
 ```bash
 CP="repopilot-cli/target/classes:$(cat repopilot-cli/target/classpath.txt)"
