@@ -2,6 +2,7 @@ package com.repopilot.server.session;
 
 import static org.hamcrest.Matchers.hasSize;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -14,7 +15,12 @@ import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
 
-@SpringBootTest
+@SpringBootTest(properties = {
+        "spring.datasource.url=jdbc:h2:mem:repopilot-server-controller;MODE=PostgreSQL;DATABASE_TO_UPPER=false;DB_CLOSE_DELAY=-1",
+        "spring.datasource.driver-class-name=org.h2.Driver",
+        "spring.datasource.username=",
+        "spring.datasource.password="
+})
 @AutoConfigureMockMvc
 class SessionControllerTests {
 
@@ -81,6 +87,100 @@ class SessionControllerTests {
                 .andExpect(jsonPath("$[0].sessionId").value(sessionId))
                 .andExpect(jsonPath("$[0].type").value("TOOL_CALL_REQUESTED"))
                 .andExpect(jsonPath("$[0].summary").value("准备读取 pom.xml"));
+    }
+
+    @Test
+    void shouldPersistLatestPlanAndUpdatePlanStatus() throws Exception {
+        MvcResult createResult = mockMvc.perform(post("/api/sessions")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "workspaceId": "workspace-plan",
+                                  "requestedBy": "cli"
+                                }
+                                """))
+                .andExpect(status().isCreated())
+                .andReturn();
+
+        String sessionId = extractJsonValue(createResult.getResponse().getContentAsString(), "sessionId");
+
+        MvcResult planResult = mockMvc.perform(post("/api/sessions/{sessionId}/plans", sessionId)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "turnId": "turn-001",
+                                  "content": "1. read file\\n2. patch file"
+                                }
+                                """))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.sessionId").value(sessionId))
+                .andExpect(jsonPath("$.turnId").value("turn-001"))
+                .andExpect(jsonPath("$.content").value("1. read file\n2. patch file"))
+                .andExpect(jsonPath("$.status").value("PENDING_CONFIRM"))
+                .andReturn();
+
+        String planId = extractJsonValue(planResult.getResponse().getContentAsString(), "planId");
+
+        mockMvc.perform(get("/api/sessions/{sessionId}/plans/latest", sessionId))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.planId").value(planId))
+                .andExpect(jsonPath("$.status").value("PENDING_CONFIRM"));
+
+        mockMvc.perform(patch("/api/sessions/{sessionId}/plans/{planId}/status", sessionId, planId)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "status": "APPROVED"
+                                }
+                                """))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("APPROVED"));
+
+        mockMvc.perform(patch("/api/sessions/{sessionId}/plans/{planId}/status", sessionId, planId)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "status": "EXECUTED"
+                                }
+                                """))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("EXECUTED"));
+    }
+
+    @Test
+    void shouldRejectIllegalPlanStatusTransition() throws Exception {
+        MvcResult createResult = mockMvc.perform(post("/api/sessions")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "workspaceId": "workspace-plan-invalid",
+                                  "requestedBy": "cli"
+                                }
+                                """))
+                .andExpect(status().isCreated())
+                .andReturn();
+
+        String sessionId = extractJsonValue(createResult.getResponse().getContentAsString(), "sessionId");
+        MvcResult planResult = mockMvc.perform(post("/api/sessions/{sessionId}/plans", sessionId)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "content": "plan content"
+                                }
+                                """))
+                .andExpect(status().isCreated())
+                .andReturn();
+
+        String planId = extractJsonValue(planResult.getResponse().getContentAsString(), "planId");
+
+        mockMvc.perform(patch("/api/sessions/{sessionId}/plans/{planId}/status", sessionId, planId)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {
+                                  "status": "EXECUTED"
+                                }
+                                """))
+                .andExpect(status().isBadRequest());
     }
 
     @Test

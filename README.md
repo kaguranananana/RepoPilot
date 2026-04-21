@@ -80,6 +80,9 @@ RepoPilot 当前只承诺“小型、明确、受控”的本地编码任务：
 ```dotenv
 REPOPILOT_SERVER_BASE_URL=http://127.0.0.1:8080
 REPOPILOT_WORKSPACE_ID=coding-agent
+REPOPILOT_DATABASE_URL=jdbc:postgresql://127.0.0.1:15432/repopilot
+REPOPILOT_DATABASE_USERNAME=repopilot
+REPOPILOT_DATABASE_PASSWORD=repopilot
 REPOPILOT_MODEL_PROVIDER=openai-compatible
 OPENAI_COMPATIBLE_API_KEY=your-api-key
 OPENAI_COMPATIBLE_BASE_URL=https://your-openai-compatible-endpoint/v1
@@ -99,12 +102,22 @@ mvn test
 
 ### 2. 启动控制面
 
+先启动本地 PostgreSQL：
+
+```bash
+docker compose up -d postgres
+```
+
 当前最稳定的启动方式是进入 `repopilot-server` 模块运行：
 
 ```bash
+mvn -q -pl repopilot-server -am -DskipTests install
 cd repopilot-server
+set -a; source ../.env.local; set +a
 mvn spring-boot:run
 ```
+
+server 启动时会读取 `REPOPILOT_DATABASE_URL`、`REPOPILOT_DATABASE_USERNAME` 和 `REPOPILOT_DATABASE_PASSWORD` 连接 PostgreSQL，并通过 Flyway 自动创建 `sessions`、`trace_events` 和 `plans` 表。
 
 ### 3. 构建 CLI 运行时 classpath
 
