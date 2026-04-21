@@ -15,6 +15,13 @@ mvn -pl repopilot-cli -am test
 
 当前仓库还没有配置可直接分发的 CLI fat jar 或模块级 exec 入口；`eval` 子命令已接入 `RepoPilotCliCommand`，命令级链路由 `EvalCommandTest` 覆盖。后续如果补 CLI 打包任务，可以直接通过 `repopilot eval` 暴露同一入口。
 
+上下文成本评测使用独立的 `context-cost` 子命令，不混入 `taskSuccessRate` 口径：
+
+```bash
+java -cp "<cli-classpath>" com.repopilot.cli.RepoPilotCliApplication context-cost
+java -cp "<cli-classpath>" com.repopilot.cli.RepoPilotCliApplication context-cost --measurement-kind REAL_USAGE
+```
+
 `SCRIPTED_RUNTIME` 默认输出：
 
 - 工作区根目录：`target/repopilot-eval-workspaces`
@@ -26,6 +33,20 @@ mvn -pl repopilot-cli -am test
 - 工作区根目录：`target/repopilot-real-model-eval-workspaces`
 - 结构化报告：`target/repopilot-real-model-eval-report.json`
 - 运行类型：`REAL_MODEL_PROVIDER`
+
+`context-cost` 本地估算默认输出：
+
+- 工作区根目录：`target/repopilot-context-cost-estimated-workspaces`
+- JSON 报告：`target/repopilot-context-cost-estimated-report.json`
+- Markdown 报告：`target/repopilot-context-cost-estimated-report.md`
+- 计量口径：`ESTIMATED_INPUT`
+
+`context-cost --measurement-kind REAL_USAGE` 默认输出：
+
+- 工作区根目录：`target/repopilot-context-cost-real-usage-workspaces`
+- JSON 报告：`target/repopilot-context-cost-real-usage-report.json`
+- Markdown 报告：`target/repopilot-context-cost-real-usage-report.md`
+- 计量口径：`REAL_USAGE`
 
 真实模型评估前需要显式设置：
 
@@ -50,6 +71,17 @@ java -cp "<cli-classpath>" com.repopilot.cli.RepoPilotCliApplication eval --runt
 - `taskSuccessRate`：通过场景验收的任务数 / 总任务数。
 - `avgSteps`：每个任务实际进入模型循环的平均 step 数。
 - `avgDurationMillis`：每个任务从夹具重建到验收结束的平均耗时。
+
+`context-cost` 单独记录：
+
+- `baselineTotalInputTokens`：完整历史回放策略累计输入 token。
+- `candidateTotalInputTokens`：结构化压缩策略累计输入 token。
+- `inputTokenReductionRate`：累计输入 token 下降比例。
+- `baselinePeakInputTokens` / `candidatePeakInputTokens`：单轮模型调用的峰值输入 token。
+- `peakInputTokenReductionRate`：峰值输入 token 下降比例。
+- `candidateCompactionCount`：结构化压缩策略触发压缩的次数。
+
+`ESTIMATED_INPUT` 使用 JTokkit 对即将发送给模型的 messages 和 tools 做本地计数；`REAL_USAGE` 使用 OpenAI-compatible 响应中的 `usage.prompt_tokens`，缺失 usage 时直接失败。
 
 报告同时记录逐场景诊断字段：
 

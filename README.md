@@ -164,6 +164,32 @@ java -cp "$CP" com.repopilot.cli.RepoPilotCliApplication eval --runtime-kind REA
 
 - `target/repopilot-real-model-eval-report.json`
 
+### 7. 运行上下文成本评测
+
+本地估算口径不调用真实模型，用 JTokkit 统计同一长轮次场景在“完整历史回放”和“结构化上下文压缩”下的输入 token 差异：
+
+```bash
+CP="repopilot-cli/target/classes:$(cat repopilot-cli/target/classpath.txt)"
+java -cp "$CP" com.repopilot.cli.RepoPilotCliApplication context-cost
+```
+
+输出报告：
+
+- `target/repopilot-context-cost-estimated-report.json`
+- `target/repopilot-context-cost-estimated-report.md`
+
+真实 usage 口径会调用 OpenAI-compatible provider，并要求每次响应都返回 `usage.prompt_tokens`；如果 provider 不返回 usage，评测会直接失败：
+
+```bash
+CP="repopilot-cli/target/classes:$(cat repopilot-cli/target/classpath.txt)"
+java -cp "$CP" com.repopilot.cli.RepoPilotCliApplication context-cost --measurement-kind REAL_USAGE
+```
+
+输出报告：
+
+- `target/repopilot-context-cost-real-usage-report.json`
+- `target/repopilot-context-cost-real-usage-report.md`
+
 ## Demo 指南
 
 推荐先看 `docs/demo/repopilot-demo.md`，其中已经整理了三类可对外展示的证据：

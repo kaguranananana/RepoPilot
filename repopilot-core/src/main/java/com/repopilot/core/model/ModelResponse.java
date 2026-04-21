@@ -1,5 +1,7 @@
 package com.repopilot.core.model;
 
+import java.util.Optional;
+
 /**
  * 模型单轮输出的统一抽象。
  * 当前只有两种合法结果：
@@ -7,5 +9,8 @@ package com.repopilot.core.model;
  * 2. 发起一个或多个工具调用
  */
 public sealed interface ModelResponse permits FinalModelResponse, ToolCallModelResponse {
-}
 
+    default Optional<TokenUsage> tokenUsage() {
+        return Optional.empty();
+    }
+}

@@ -27,6 +27,7 @@
         <junit.version>5.13.4</junit.version>
         <spring.boot.version>3.5.6</spring.boot.version>
         <picocli.version>4.7.7</picocli.version>
+        <jtokkit.version>1.1.0</jtokkit.version>
         <surefire.version>3.5.4</surefire.version>
     </properties>
 
@@ -52,6 +53,11 @@
                 <groupId>info.picocli</groupId>
                 <artifactId>picocli</artifactId>
                 <version>${picocli.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.knuddels</groupId>
+                <artifactId>jtokkit</artifactId>
+                <version>${jtokkit.version}</version>
             </dependency>
             <dependency>
                 <groupId>org.springframework.boot</groupId>
@@ -88,4 +94,3 @@
         </pluginManagement>
     </build>
 </project>
-

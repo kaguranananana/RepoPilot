@@ -89,6 +89,47 @@ class OpenAiCompatibleChatModelAdapterTest {
     }
 
     @Test
+    void shouldParseTokenUsageFromOpenAiCompatibleResponse() throws Exception {
+        httpServer.createContext("/chat/completions", exchange -> respondJson(exchange, """
+                {
+                  "id": "chatcmpl-usage",
+                  "choices": [
+                    {
+                      "index": 0,
+                      "message": {
+                        "role": "assistant",
+                        "content": "带 usage 的回答"
+                      }
+                    }
+                  ],
+                  "usage": {
+                    "prompt_tokens": 123,
+                    "completion_tokens": 17,
+                    "total_tokens": 140
+                  }
+                }
+                """));
+        httpServer.start();
+
+        OpenAiCompatibleChatModelAdapter adapter = new OpenAiCompatibleChatModelAdapter(
+                "test-key",
+                baseUrl,
+                "kimi-k2.5",
+                List.of()
+        );
+
+        ModelResponse response = adapter.next(List.of(
+                new ConversationMessage(MessageRole.USER, "请回复")
+        ));
+
+        FinalModelResponse finalResponse = assertInstanceOf(FinalModelResponse.class, response);
+        assertTrue(finalResponse.tokenUsage().isPresent());
+        assertEquals(123, finalResponse.tokenUsage().orElseThrow().promptTokens());
+        assertEquals(17, finalResponse.tokenUsage().orElseThrow().completionTokens());
+        assertEquals(140, finalResponse.tokenUsage().orElseThrow().totalTokens());
+    }
+
+    @Test
     void shouldSendToolsAndParseToolCalls() throws Exception {
         httpServer.createContext("/chat/completions", exchange -> {
             lastRequestBody = new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8);

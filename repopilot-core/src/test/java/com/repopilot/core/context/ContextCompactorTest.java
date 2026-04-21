@@ -5,7 +5,9 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.repopilot.core.model.ConversationMessage;
 import com.repopilot.core.model.MessageRole;
+import com.repopilot.core.model.ToolCall;
 import java.util.List;
+import java.util.Map;
 import org.junit.jupiter.api.Test;
 
 class ContextCompactorTest {
@@ -36,7 +38,12 @@ class ContextCompactorTest {
                 new ConversationMessage(MessageRole.SYSTEM, "system"),
                 new ConversationMessage(MessageRole.USER, "完成 task11"),
                 new ConversationMessage(MessageRole.ASSISTANT, "先读取 pom.xml"),
-                new ConversationMessage(MessageRole.TOOL, "[read_file] <project/>", "call-1", List.of()),
+                ConversationMessage.assistantToolCalls(List.of(new ToolCall(
+                        "call-1",
+                        "read_file",
+                        Map.of("path", "pom.xml")
+                ))),
+                ConversationMessage.toolResult("call-1", "[read_file] <project/>"),
                 new ConversationMessage(MessageRole.ASSISTANT, "继续读取 docs")
         ), snapshot);
 
@@ -45,6 +52,7 @@ class ContextCompactorTest {
                         MessageRole.SYSTEM,
                         MessageRole.WORKING_MEMORY,
                         MessageRole.CONTEXT_SUMMARY,
+                        MessageRole.ASSISTANT,
                         MessageRole.TOOL,
                         MessageRole.ASSISTANT
                 ),
@@ -92,5 +100,53 @@ class ContextCompactorTest {
         assertTrue(result.messages().stream()
                 .filter(message -> message.role() == MessageRole.SYSTEM)
                 .anyMatch(message -> message.content().contains("# Activated Skill")));
+    }
+
+    @Test
+    void shouldRetainAssistantToolCallWhenRecentWindowContainsToolResult() {
+        ContextCompactionPolicy policy = new ContextCompactionPolicy(4, 1, 1);
+        ContextCompactor compactor = new ContextCompactor(policy);
+        WorkingMemorySnapshot snapshot = new WorkingMemorySnapshot(
+                "读取多个文件",
+                List.of("已读取 notes/a.txt"),
+                List.of("read_file(path=notes/a.txt) -> SUCCESS"),
+                List.of(),
+                List.of(),
+                "继续推进当前任务",
+                List.of("notes/a.txt"),
+                List.of("read_file(path=notes/a.txt)"),
+                List.of(),
+                List.of(),
+                List.of(),
+                1,
+                4,
+                "compaction-1",
+                "high_fidelity_message_limit"
+        );
+
+        ContextCompactor.CompactionResult result = compactor.compact(List.of(
+                new ConversationMessage(MessageRole.USER, "读取多个文件"),
+                ConversationMessage.assistantToolCalls(List.of(new ToolCall(
+                        "call-a",
+                        "read_file",
+                        Map.of("path", "notes/a.txt")
+                ))),
+                ConversationMessage.toolResult("call-a", "[read_file] A"),
+                ConversationMessage.assistantToolCalls(List.of(new ToolCall(
+                        "call-b",
+                        "read_file",
+                        Map.of("path", "notes/b.txt")
+                ))),
+                ConversationMessage.toolResult("call-b", "[read_file] B")
+        ), snapshot);
+
+        List<ConversationMessage> retainedMessages = result.messages().stream()
+                .filter(message -> message.role() == MessageRole.ASSISTANT || message.role() == MessageRole.TOOL)
+                .toList();
+        assertEquals(List.of(MessageRole.ASSISTANT, MessageRole.TOOL), retainedMessages.stream()
+                .map(ConversationMessage::role)
+                .toList());
+        assertEquals("call-b", retainedMessages.get(0).toolCalls().get(0).id());
+        assertEquals("call-b", retainedMessages.get(1).toolCallId());
     }
 }

@@ -41,8 +41,10 @@ public final class ContextCompactor {
 
         int retainedCount = Math.min(policy.retainedHighFidelityMessages(), highFidelityMessages.size());
         int retainedStartIndex = highFidelityMessages.size() - retainedCount;
-        List<ConversationMessage> retainedMessages = highFidelityMessages.subList(retainedStartIndex, highFidelityMessages.size());
-        int compactedCount = retainedStartIndex;
+        int protocolSafeRetainedStartIndex = expandStartToToolCallBoundary(highFidelityMessages, retainedStartIndex);
+        List<ConversationMessage> retainedMessages =
+                highFidelityMessages.subList(protocolSafeRetainedStartIndex, highFidelityMessages.size());
+        int compactedCount = protocolSafeRetainedStartIndex;
 
         // 先保留所有 system 消息，
         // 因为它们属于固定上下文，不应该被压缩动作吞掉。
@@ -60,6 +62,32 @@ public final class ContextCompactor {
         compactedMessages.addAll(retainedMessages);
 
         return new CompactionResult(List.copyOf(compactedMessages), compactedCount);
+    }
+
+    private int expandStartToToolCallBoundary(List<ConversationMessage> highFidelityMessages, int retainedStartIndex) {
+        if (retainedStartIndex <= 0 || retainedStartIndex >= highFidelityMessages.size()) {
+            return retainedStartIndex;
+        }
+
+        ConversationMessage firstRetainedMessage = highFidelityMessages.get(retainedStartIndex);
+        if (firstRetainedMessage.role() != MessageRole.TOOL) {
+            return retainedStartIndex;
+        }
+
+        // OpenAI-compatible 协议要求 TOOL 消息必须紧跟对应的 assistant tool_calls。
+        // 如果最近窗口从 TOOL 消息中间开始，就向前扩展到发起该 tool_call 的 ASSISTANT 消息。
+        for (int index = retainedStartIndex - 1; index >= 0; index--) {
+            ConversationMessage candidate = highFidelityMessages.get(index);
+            if (candidate.role() != MessageRole.ASSISTANT || candidate.toolCalls().isEmpty()) {
+                continue;
+            }
+            boolean ownsToolResult = candidate.toolCalls().stream()
+                    .anyMatch(toolCall -> toolCall.id().equals(firstRetainedMessage.toolCallId()));
+            if (ownsToolResult) {
+                return index;
+            }
+        }
+        return retainedStartIndex;
     }
 
     public record CompactionResult(

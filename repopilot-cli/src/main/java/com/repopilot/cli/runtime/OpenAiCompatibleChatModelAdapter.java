@@ -7,6 +7,7 @@ import com.repopilot.core.model.FinalModelResponse;
 import com.repopilot.core.model.MessageRole;
 import com.repopilot.core.model.ModelAdapter;
 import com.repopilot.core.model.ModelResponse;
+import com.repopilot.core.model.TokenUsage;
 import com.repopilot.core.model.ToolCall;
 import com.repopilot.core.model.ToolCallModelResponse;
 import com.repopilot.core.skill.ActivatedSkillSet;
@@ -22,6 +23,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.Set;
 
 /**
@@ -228,10 +230,12 @@ public final class OpenAiCompatibleChatModelAdapter implements ModelAdapter {
             );
         }
 
-        JsonNode messageNode = objectMapper.readTree(response.body()).path("choices").path(0).path("message");
+        JsonNode rootNode = objectMapper.readTree(response.body());
+        JsonNode messageNode = rootNode.path("choices").path(0).path("message");
+        Optional<TokenUsage> tokenUsage = parseTokenUsage(rootNode);
         JsonNode toolCallsNode = messageNode.path("tool_calls");
         if (toolCallsNode.isArray() && toolCallsNode.size() > 0) {
-            return new ToolCallModelResponse(parseToolCalls(toolCallsNode));
+            return new ToolCallModelResponse(parseToolCalls(toolCallsNode), tokenUsage);
         }
 
         JsonNode contentNode = messageNode.path("content");
@@ -239,7 +243,21 @@ public final class OpenAiCompatibleChatModelAdapter implements ModelAdapter {
             throw new IllegalStateException("OpenAI-compatible API response does not contain assistant content.");
         }
 
-        return new FinalModelResponse(contentNode.asText().strip());
+        return new FinalModelResponse(contentNode.asText().strip(), tokenUsage);
+    }
+
+    private Optional<TokenUsage> parseTokenUsage(JsonNode rootNode) {
+        JsonNode usageNode = rootNode.path("usage");
+        if (usageNode.isMissingNode() || usageNode.isNull()) {
+            return Optional.empty();
+        }
+
+        // usage 是真实成本评测的事实来源，字段不完整时必须暴露 provider 响应问题。
+        return Optional.of(new TokenUsage(
+                readRequiredInt(usageNode, "prompt_tokens"),
+                readRequiredInt(usageNode, "completion_tokens"),
+                readRequiredInt(usageNode, "total_tokens")
+        ));
     }
 
     private List<ToolCall> parseToolCalls(JsonNode toolCallsNode) throws IOException {
@@ -287,6 +305,14 @@ public final class OpenAiCompatibleChatModelAdapter implements ModelAdapter {
             throw new IllegalStateException("OpenAI-compatible tool call field is missing: " + fieldName);
         }
         return fieldNode.asText().strip();
+    }
+
+    private int readRequiredInt(JsonNode node, String fieldName) {
+        JsonNode fieldNode = node.path(fieldName);
+        if (!fieldNode.canConvertToInt()) {
+            throw new IllegalStateException("OpenAI-compatible usage field is missing: " + fieldName);
+        }
+        return fieldNode.asInt();
     }
 
     private String normalizeBaseUrl(String value) {

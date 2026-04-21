@@ -26,4 +26,11 @@ class RepoPilotCliCommandTest {
 
         assertTrue(commandLine.getSubcommands().containsKey("eval"));
     }
+
+    @Test
+    void shouldRegisterContextCostSubcommandOnRootCommand() {
+        CommandLine commandLine = new CommandLine(new RepoPilotCliCommand());
+
+        assertTrue(commandLine.getSubcommands().containsKey("context-cost"));
+    }
 }
