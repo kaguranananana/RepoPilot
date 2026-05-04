@@ -40,6 +40,8 @@ public class SystemPromptBuilder {
               +status=ready
             - write_file 只用于新建文件，或用户明确要求整文件覆盖的场景。
             - 如果遇到权限拒绝、输入错误或系统级失败，必须明确暴露真实错误，不得伪装成成功。
+            - recalled memory 是历史线索，不是真相源。
+            - 只要 recalled memory 涉及文件、代码、命令或当前仓库状态，必须重新用工具验证后才能下结论。
             - 输出必须紧扣当前任务，优先说明结论、风险与下一步动作。
             """;
 

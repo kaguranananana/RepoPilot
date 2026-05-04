@@ -40,6 +40,8 @@ public final class OpenAiCompatibleChatModelAdapter implements ModelAdapter {
     private final String baseUrl;
     private final String modelName;
     private final List<ToolDefinition> availableTools;
+    private final String forcedToolChoiceName;
+    private final String thinkingModeType;
     private final HttpClient httpClient;
     private final ObjectMapper objectMapper;
 
@@ -54,6 +56,8 @@ public final class OpenAiCompatibleChatModelAdapter implements ModelAdapter {
                 baseUrl,
                 modelName,
                 availableTools,
+                null,
+                null,
                 HttpClient.newHttpClient(),
                 ProtocolObjectMapperFactory.create()
         );
@@ -64,6 +68,47 @@ public final class OpenAiCompatibleChatModelAdapter implements ModelAdapter {
             String baseUrl,
             String modelName,
             List<ToolDefinition> availableTools,
+            String forcedToolChoiceName
+    ) {
+        this(
+                apiKey,
+                baseUrl,
+                modelName,
+                availableTools,
+                forcedToolChoiceName,
+                null,
+                HttpClient.newHttpClient(),
+                ProtocolObjectMapperFactory.create()
+        );
+    }
+
+    OpenAiCompatibleChatModelAdapter(
+            String apiKey,
+            String baseUrl,
+            String modelName,
+            List<ToolDefinition> availableTools,
+            String forcedToolChoiceName,
+            String thinkingModeType
+    ) {
+        this(
+                apiKey,
+                baseUrl,
+                modelName,
+                availableTools,
+                forcedToolChoiceName,
+                thinkingModeType,
+                HttpClient.newHttpClient(),
+                ProtocolObjectMapperFactory.create()
+        );
+    }
+
+    OpenAiCompatibleChatModelAdapter(
+            String apiKey,
+            String baseUrl,
+            String modelName,
+            List<ToolDefinition> availableTools,
+            String forcedToolChoiceName,
+            String thinkingModeType,
             HttpClient httpClient,
             ObjectMapper objectMapper
     ) {
@@ -71,6 +116,8 @@ public final class OpenAiCompatibleChatModelAdapter implements ModelAdapter {
         this.baseUrl = normalizeBaseUrl(baseUrl);
         this.modelName = requireNonBlank(modelName, "modelName must not be blank.");
         this.availableTools = availableTools == null ? List.of() : List.copyOf(availableTools);
+        this.forcedToolChoiceName = normalizeOptionalText(forcedToolChoiceName);
+        this.thinkingModeType = normalizeOptionalText(thinkingModeType);
         this.httpClient = Objects.requireNonNull(httpClient, "httpClient must not be null.");
         this.objectMapper = Objects.requireNonNull(objectMapper, "objectMapper must not be null.");
     }
@@ -105,11 +152,24 @@ public final class OpenAiCompatibleChatModelAdapter implements ModelAdapter {
         requestBody.put("model", modelName);
         requestBody.put("stream", false);
         requestBody.put("messages", mapMessages(messages));
+        if (thinkingModeType != null) {
+            // 这里只在调用方显式指定时才注入 DeepSeek 的 thinking 开关，
+            // 避免把 provider 私有参数无差别扩散到所有 OpenAI 兼容后端。
+            // 对上下文摘要这类“只需稳定产出结构化结果”的子模型，
+            // 显式关闭 thinking 可以绕开 DeepSeek-V4-Pro 在默认思考模式下拒绝 tool_choice 的兼容性问题。
+            requestBody.put("thinking", Map.of("type", thinkingModeType));
+        }
         // tool schema 不能只看构造时注入的全局工具，
         // 必须结合当前消息历史里的已激活 Skill 重新计算一次可见工具子集。
         List<ToolDefinition> visibleTools = resolveVisibleTools(messages);
         if (!visibleTools.isEmpty()) {
             requestBody.put("tools", mapTools(visibleTools));
+            if (forcedToolChoiceName != null) {
+                // 结构化摘要链路要求模型必须调用指定工具，
+                // 这里在请求体里显式写入 tool_choice，
+                // 避免 DeepSeek 在长上下文下把“应当 tool call”的任务退回成自然语言回答。
+                requestBody.put("tool_choice", buildForcedToolChoice(visibleTools));
+            }
         }
         return objectMapper.writeValueAsString(requestBody);
     }
@@ -220,6 +280,19 @@ public final class OpenAiCompatibleChatModelAdapter implements ModelAdapter {
         return List.copyOf(tools);
     }
 
+    private Map<String, Object> buildForcedToolChoice(List<ToolDefinition> visibleTools) {
+        boolean forcedToolVisible = visibleTools.stream()
+                .anyMatch(toolDefinition -> toolDefinition.name().equals(forcedToolChoiceName));
+        if (!forcedToolVisible) {
+            throw new IllegalStateException("Forced tool choice is not visible: " + forcedToolChoiceName);
+        }
+
+        Map<String, Object> toolChoice = new LinkedHashMap<>();
+        toolChoice.put("type", "function");
+        toolChoice.put("function", Map.of("name", forcedToolChoiceName));
+        return toolChoice;
+    }
+
     private ModelResponse parseResponse(HttpResponse<String> response) throws IOException {
         if (response.statusCode() < 200 || response.statusCode() >= 300) {
             throw new IllegalStateException(
@@ -283,12 +356,23 @@ public final class OpenAiCompatibleChatModelAdapter implements ModelAdapter {
         Map<String, String> arguments = new LinkedHashMap<>();
         argumentsNode.fields().forEachRemaining(entry -> {
             JsonNode valueNode = entry.getValue();
-            if (!valueNode.isTextual()) {
-                throw new IllegalStateException("Tool argument must be a string: " + entry.getKey());
-            }
-            arguments.put(entry.getKey(), valueNode.asText());
+            // OpenAI 兼容模型在工具调用里可能返回数组或对象参数。
+            // RepoPilot 当前内部仍然统一使用字符串字典，
+            // 因此这里把非字符串值稳定序列化成 JSON 字符串，交给上层受限协议自己解析。
+            arguments.put(entry.getKey(), serializeArgumentValue(valueNode));
         });
         return Map.copyOf(arguments);
+    }
+
+    private String serializeArgumentValue(JsonNode valueNode) {
+        if (valueNode.isTextual()) {
+            return valueNode.asText();
+        }
+        try {
+            return objectMapper.writeValueAsString(valueNode);
+        } catch (IOException exception) {
+            throw new IllegalStateException("Failed to serialize OpenAI-compatible tool argument value.", exception);
+        }
     }
 
     private String serializeArguments(Map<String, String> arguments) {
@@ -321,6 +405,13 @@ public final class OpenAiCompatibleChatModelAdapter implements ModelAdapter {
             return normalized.substring(0, normalized.length() - 1);
         }
         return normalized;
+    }
+
+    private String normalizeOptionalText(String value) {
+        if (value == null || value.isBlank()) {
+            return null;
+        }
+        return value.strip();
     }
 
     private String requireNonBlank(String value, String message) {

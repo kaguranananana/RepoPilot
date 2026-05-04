@@ -47,6 +47,7 @@ class ConsoleTraceObserverTest {
         );
         observer.onModelResponse(2, new FinalModelResponse("文件内容已确认"));
         observer.onAssistantAnswer("文件内容已确认");
+        observer.printHelp();
 
         String output = outputStream.toString(StandardCharsets.UTF_8);
         assertTrue(output.contains("[session] created session-001 workspace=workspace-001"));
@@ -56,6 +57,10 @@ class ConsoleTraceObserverTest {
         assertTrue(output.contains("[tool:success] read_file 2 行"));
         assertTrue(output.contains("[step 2] model -> final"));
         assertTrue(output.contains("[assistant] 文件内容已确认"));
+        assertTrue(output.contains("/remember"));
+        assertTrue(output.contains("/memories"));
+        assertTrue(output.contains("/memory <id>"));
+        assertTrue(output.contains("/forget <id>"));
     }
 
     @Test

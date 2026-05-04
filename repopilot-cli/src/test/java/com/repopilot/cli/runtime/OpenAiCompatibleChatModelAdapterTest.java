@@ -194,6 +194,49 @@ class OpenAiCompatibleChatModelAdapterTest {
     }
 
     @Test
+    void shouldSerializeArrayToolArgumentsAsJsonStringsWhenParsingToolCalls() throws Exception {
+        httpServer.createContext("/chat/completions", exchange -> respondJson(exchange, """
+                {
+                  "id": "chatcmpl-002-array",
+                  "choices": [
+                    {
+                      "index": 0,
+                      "message": {
+                        "role": "assistant",
+                        "content": "",
+                        "tool_calls": [
+                          {
+                            "id": "call-array-001",
+                            "type": "function",
+                            "function": {
+                              "name": "submit_structured_context_summary",
+                              "arguments": "{\\"user_goal\\":\\"修复测试失败\\",\\"current_phase\\":\\"EXECUTE\\",\\"plan_state\\":\\"已完成定位\\",\\"touched_files\\":[\\"src/App.java\\"],\\"important_findings\\":[\\"断言失败来自状态字段\\"],\\"failed_commands\\":[],\\"decisions\\":[\\"只做最小补丁\\"],\\"next_actions\\":[\\"修改状态字段后复测\\"]}"
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  ]
+                }
+                """));
+        httpServer.start();
+
+        OpenAiCompatibleChatModelAdapter adapter = new OpenAiCompatibleChatModelAdapter(
+                "test-key",
+                baseUrl,
+                "kimi-k2.5",
+                List.of()
+        );
+
+        ToolCallModelResponse response = assertInstanceOf(ToolCallModelResponse.class, adapter.next(List.of(
+                new ConversationMessage(MessageRole.USER, "压缩上下文")
+        )));
+
+        assertEquals("[\"src/App.java\"]", response.toolCalls().get(0).arguments().get("touched_files"));
+        assertEquals("[]", response.toolCalls().get(0).arguments().get("failed_commands"));
+    }
+
+    @Test
     void shouldSerializeAssistantToolCallAndToolResultMessages() throws Exception {
         httpServer.createContext("/chat/completions", exchange -> {
             lastRequestBody = new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8);

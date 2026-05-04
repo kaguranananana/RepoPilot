@@ -413,12 +413,24 @@ public final class AnthropicChatModelAdapter implements ModelAdapter {
         Map<String, String> arguments = new LinkedHashMap<>();
         argumentsNode.fields().forEachRemaining(entry -> {
             JsonNode valueNode = entry.getValue();
-            if (!valueNode.isTextual()) {
-                throw new IllegalStateException("Tool argument must be a string: " + entry.getKey());
-            }
-            arguments.put(entry.getKey(), valueNode.asText());
+            // RepoPilot 运行时当前仍以 `Map<String, String>` 贯穿工具参数，
+            // 所以这里对字符串直接透传，
+            // 对数组 / 对象 / 布尔值等结构化值统一序列化成 JSON 字符串。
+            // 这样已有工具保持不变，同时允许结构化摘要这类受限协议承载数组字段。
+            arguments.put(entry.getKey(), serializeArgumentValue(valueNode));
         });
         return Map.copyOf(arguments);
+    }
+
+    private String serializeArgumentValue(JsonNode valueNode) {
+        if (valueNode.isTextual()) {
+            return valueNode.asText();
+        }
+        try {
+            return objectMapper.writeValueAsString(valueNode);
+        } catch (IOException exception) {
+            throw new IllegalStateException("Failed to serialize Anthropic tool argument value.", exception);
+        }
     }
 
     private String readRequiredText(JsonNode node, String fieldName) {

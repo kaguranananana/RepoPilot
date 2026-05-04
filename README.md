@@ -91,6 +91,10 @@ java -cp "$CP" com.repopilot.cli.RepoPilotCliApplication
 /help
 /plan
 /execute
+/remember
+/memories
+/memory <id>
+/forget <id>
 /reset
 /exit
 ```
@@ -104,6 +108,7 @@ java -cp "$CP" com.repopilot.cli.RepoPilotCliApplication
 - **补丁式修改**：修改已有文件时优先使用 `apply_patch`，把最小变更作为主链路。
 - **循环检测**：对连续重复的同一工具调用做确定性检测，达到阈值后中断当前回合并写入 trace。
 - **上下文压缩**：通过 `working_memory`、`context_summary`、工具结果 microcompact 和结构化摘要控制长轮次上下文成本。
+- **持久记忆**：支持用户显式写入、列出、查看、删除长期记忆；新任务开始前会按需自动召回少量相关记忆，并继续要求模型重新用工具验证事实。
 - **Skill 激活**：支持用户通过 `/skill-name` 或 `$skill-name` 显式激活，也支持模型调用 `activate_skill`；已激活 Skill 的 `allowed-tools` 会参与工具子集交集计算。
 - **控制面追踪**：通过 Spring Boot API 持久化 session、trace event 和 plan，支持后续查询与回放。
 - **双口径评测**：提供 scripted runtime 评测和真实模型 provider 评测，并提供上下文成本对比报告。
@@ -176,6 +181,7 @@ java -cp "$CP" com.repopilot.cli.RepoPilotCliApplication context-cost --measurem
 - `mvn test`：验证多模块 Java 代码、核心 runtime、CLI、server 和协议对象。
 - `eval`：验证固定任务集中工具调用、补丁修改、命令验证、Skill 激活和错误暴露。
 - `context-cost`：对比完整历史回放和结构化上下文压缩的输入 token 成本。
+- 交互式 CLI：可直接演示 `/remember -> 相关任务自动 recall -> /forget` 的持久记忆闭环。
 
 最近的基线记录见：
 

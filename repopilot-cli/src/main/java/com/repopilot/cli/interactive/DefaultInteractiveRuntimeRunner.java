@@ -11,6 +11,13 @@ import com.repopilot.core.approval.ToolApprovalHandler;
 import com.repopilot.core.model.ConversationMessage;
 import com.repopilot.core.model.MessageRole;
 import com.repopilot.core.model.ModelAdapter;
+import com.repopilot.core.memory.FilePersistentMemoryStore;
+import com.repopilot.core.memory.MemoryIndexEntry;
+import com.repopilot.core.memory.MemoryRecallSelection;
+import com.repopilot.core.memory.MemoryRecallService;
+import com.repopilot.core.memory.ModelMemoryRecallSelector;
+import com.repopilot.core.memory.PersistentMemoryStore;
+import com.repopilot.core.memory.RecalledMemoryPromptRenderer;
 import com.repopilot.core.prompt.DynamicPromptContext;
 import com.repopilot.core.prompt.SystemPromptBoundary;
 import com.repopilot.core.prompt.SystemPromptBuilder;
@@ -49,6 +56,8 @@ public final class DefaultInteractiveRuntimeRunner implements InteractiveRuntime
     private final ToolApprovalHandler toolApprovalHandler;
     private final SkillLoader skillLoader;
     private final SkillActivationService skillActivationService;
+    private final PersistentMemoryStore memoryStore;
+    private final RecalledMemoryPromptRenderer recalledMemoryPromptRenderer;
 
     public DefaultInteractiveRuntimeRunner(
             Clock clock,
@@ -83,7 +92,9 @@ public final class DefaultInteractiveRuntimeRunner implements InteractiveRuntime
                 workspaceRoot,
                 maxSteps,
                 toolApprovalHandler,
-                SkillLoader.createDefault(workspaceRoot, resolveUserHome())
+                SkillLoader.createDefault(workspaceRoot, resolveUserHome()),
+                new FilePersistentMemoryStore(workspaceRoot),
+                new RecalledMemoryPromptRenderer()
         );
     }
 
@@ -95,6 +106,30 @@ public final class DefaultInteractiveRuntimeRunner implements InteractiveRuntime
             int maxSteps,
             ToolApprovalHandler toolApprovalHandler,
             SkillLoader skillLoader
+    ) {
+        this(
+                clock,
+                systemPromptBuilder,
+                modelAdapterFactory,
+                workspaceRoot,
+                maxSteps,
+                toolApprovalHandler,
+                skillLoader,
+                new FilePersistentMemoryStore(workspaceRoot),
+                new RecalledMemoryPromptRenderer()
+        );
+    }
+
+    DefaultInteractiveRuntimeRunner(
+            Clock clock,
+            SystemPromptBuilder systemPromptBuilder,
+            CliRuntimeBootstrap.ModelAdapterFactory modelAdapterFactory,
+            Path workspaceRoot,
+            int maxSteps,
+            ToolApprovalHandler toolApprovalHandler,
+            SkillLoader skillLoader,
+            PersistentMemoryStore memoryStore,
+            RecalledMemoryPromptRenderer recalledMemoryPromptRenderer
     ) {
         this.clock = Objects.requireNonNull(clock, "clock must not be null.");
         this.systemPromptBuilder = Objects.requireNonNull(systemPromptBuilder, "systemPromptBuilder must not be null.");
@@ -109,6 +144,11 @@ public final class DefaultInteractiveRuntimeRunner implements InteractiveRuntime
         this.toolApprovalHandler = Objects.requireNonNull(toolApprovalHandler, "toolApprovalHandler must not be null.");
         this.skillLoader = Objects.requireNonNull(skillLoader, "skillLoader must not be null.");
         this.skillActivationService = new SkillActivationService(this.skillLoader);
+        this.memoryStore = Objects.requireNonNull(memoryStore, "memoryStore must not be null.");
+        this.recalledMemoryPromptRenderer = Objects.requireNonNull(
+                recalledMemoryPromptRenderer,
+                "recalledMemoryPromptRenderer must not be null."
+        );
     }
 
     @Override
@@ -116,7 +156,14 @@ public final class DefaultInteractiveRuntimeRunner implements InteractiveRuntime
         Objects.requireNonNull(sessionSummary, "sessionSummary must not be null.");
 
         ToolRegistry toolRegistry = createToolRegistry();
-        return rebuildPromptBoundary(sessionSummary, List.of(), toolRegistry, AgentRunMode.EXECUTE);
+        // 初始历史只需要稳定 prompt 边界，
+        // 这里故意不做记忆召回，
+        // 避免在用户尚未发出本轮任务前就额外触发一次 selector 模型调用。
+        List<ToolDefinition> effectiveTools = resolveEffectiveTools(List.of(), toolRegistry, AgentRunMode.EXECUTE);
+        SystemPromptBoundary promptBoundary = systemPromptBuilder.build(
+                buildDynamicPromptContext(sessionSummary, effectiveTools, AgentRunMode.EXECUTE)
+        );
+        return buildInitialMessages(promptBoundary);
     }
 
     @Override
@@ -148,7 +195,13 @@ public final class DefaultInteractiveRuntimeRunner implements InteractiveRuntime
         AgentRunMode runMode = interactionMode.agentRunMode();
 
         ToolRegistry toolRegistry = createToolRegistry();
-        List<ConversationMessage> refreshedHistory = rebuildPromptBoundary(sessionSummary, history, toolRegistry, runMode);
+        List<ConversationMessage> refreshedHistory = rebuildPromptBoundary(
+                sessionSummary,
+                history,
+                safePrompt,
+                toolRegistry,
+                runMode
+        );
         List<ConversationMessage> messages = new ArrayList<>(refreshedHistory);
 
         // 每次新输入都只追加一条新的 USER 消息，
@@ -239,6 +292,7 @@ public final class DefaultInteractiveRuntimeRunner implements InteractiveRuntime
     private List<ConversationMessage> rebuildPromptBoundary(
             SessionSummary sessionSummary,
             List<ConversationMessage> history,
+            String prompt,
             ToolRegistry toolRegistry,
             AgentRunMode runMode
     ) {
@@ -257,8 +311,37 @@ public final class DefaultInteractiveRuntimeRunner implements InteractiveRuntime
         // 最后把新边界放回最前面，
         // 再拼接真正需要保留的历史消息，形成下一轮完整上下文。
         List<ConversationMessage> nextHistory = new ArrayList<>(buildInitialMessages(promptBoundary));
+        resolveRecalledMemoryMessage(sessionSummary, prompt, runMode).ifPresent(nextHistory::add);
         nextHistory.addAll(preservedHistory);
         return List.copyOf(nextHistory);
+    }
+
+    private java.util.Optional<ConversationMessage> resolveRecalledMemoryMessage(
+            SessionSummary sessionSummary,
+            String prompt,
+            AgentRunMode runMode
+    ) {
+        List<MemoryIndexEntry> candidates = memoryStore.list();
+        if (candidates.isEmpty()) {
+            return java.util.Optional.empty();
+        }
+
+        // 只有存在候选记忆时才创建 recall selector 模型。
+        // 这样默认空仓库不会额外触发一次模型调用，也不会影响现有无记忆场景的测试观察点。
+        MemoryRecallService recallService = new MemoryRecallService(
+                new ModelMemoryRecallSelector(modelAdapterFactory.createMemoryRecallSelectorModel(sessionSummary))
+        );
+        MemoryRecallSelection selection = recallService.recall(prompt, runMode, candidates);
+        if (selection.selectedIds().isEmpty()) {
+            return java.util.Optional.empty();
+        }
+
+        List<com.repopilot.core.memory.MemoryRecord> recalledRecords = selection.selectedIds().stream()
+                .map(selectedId -> memoryStore.get(selectedId).orElseThrow(
+                        () -> new IllegalStateException("记忆索引与正文不一致，缺少 id: " + selectedId)
+                ))
+                .toList();
+        return java.util.Optional.of(recalledMemoryPromptRenderer.render(recalledRecords));
     }
 
     private List<ToolDefinition> resolveEffectiveTools(
@@ -295,7 +378,14 @@ public final class DefaultInteractiveRuntimeRunner implements InteractiveRuntime
         if (index < history.size() && isRuntimeContextMessage(history.get(index))) {
             index += 1;
         }
-        return List.copyOf(history.subList(index, history.size()));
+        List<ConversationMessage> preservedMessages = new ArrayList<>();
+        for (ConversationMessage message : history.subList(index, history.size())) {
+            if (isRecalledMemoryMessage(message)) {
+                continue;
+            }
+            preservedMessages.add(message);
+        }
+        return List.copyOf(preservedMessages);
     }
 
     private boolean isBasePromptMessage(ConversationMessage message) {
@@ -304,6 +394,10 @@ public final class DefaultInteractiveRuntimeRunner implements InteractiveRuntime
 
     private boolean isRuntimeContextMessage(ConversationMessage message) {
         return message.role() == MessageRole.SYSTEM && message.content().contains("# 运行时上下文");
+    }
+
+    private boolean isRecalledMemoryMessage(ConversationMessage message) {
+        return message.role() == MessageRole.SYSTEM && message.content().contains("# Recalled Memories");
     }
 
     private List<ConversationMessage> buildInitialMessages(SystemPromptBoundary promptBoundary) {

@@ -6,15 +6,20 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.repopilot.cli.runtime.CliRuntimeBootstrap;
 import com.repopilot.core.agent.AgentLoopObserver;
+import com.repopilot.core.approval.ToolApprovalHandler;
+import com.repopilot.core.memory.FilePersistentMemoryStore;
+import com.repopilot.core.memory.MemoryRecord;
+import com.repopilot.core.memory.MemoryType;
+import com.repopilot.core.memory.PersistentMemoryStore;
+import com.repopilot.core.memory.RecalledMemoryPromptRenderer;
 import com.repopilot.core.model.ConversationMessage;
 import com.repopilot.core.model.FinalModelResponse;
 import com.repopilot.core.model.MessageRole;
 import com.repopilot.core.model.ModelAdapter;
 import com.repopilot.core.model.ModelResponse;
-import com.repopilot.core.approval.ToolApprovalHandler;
 import com.repopilot.core.trace.TracePublisher;
-import com.repopilot.core.tool.ToolDefinition;
 import com.repopilot.core.skill.SkillLoader;
+import com.repopilot.core.tool.ToolDefinition;
 import com.repopilot.protocol.session.SessionStatus;
 import com.repopilot.protocol.session.SessionSummary;
 import com.repopilot.protocol.trace.TraceEventType;
@@ -26,6 +31,7 @@ import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.stream.Collectors;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -239,6 +245,80 @@ class InteractiveRuntimeRunnerTest {
         );
     }
 
+    @Test
+    void shouldInjectAndRefreshRecalledMemoriesAcrossTurns() {
+        Path workspaceRoot = tempRoot.resolve("workspace");
+        Path userHome = tempRoot.resolve("home");
+        PersistentMemoryStore memoryStore = new FilePersistentMemoryStore(workspaceRoot);
+        memoryStore.save(memoryRecord(
+                "project-plan-boundary",
+                MemoryType.PROJECT,
+                "Plan boundary",
+                "先分析再修改",
+                "PLAN 阶段只允许只读工具。"
+        ));
+        memoryStore.save(memoryRecord(
+                "project-debug-boundary",
+                MemoryType.PROJECT,
+                "Debug boundary",
+                "调试前先复现",
+                "开始修复前必须先复现问题。"
+        ));
+        RecallRecordingModelAdapterFactory modelAdapterFactory = new RecallRecordingModelAdapterFactory(List.of(
+                """
+                        {
+                          "selected_ids": ["project-plan-boundary"]
+                        }
+                        """,
+                """
+                        {
+                          "selected_ids": ["project-debug-boundary"]
+                        }
+                        """
+        ));
+        DefaultInteractiveRuntimeRunner runtimeRunner = new DefaultInteractiveRuntimeRunner(
+                Clock.fixed(Instant.parse("2026-04-16T07:00:00Z"), ZoneOffset.UTC),
+                new com.repopilot.core.prompt.SystemPromptBuilder(),
+                modelAdapterFactory,
+                workspaceRoot,
+                8,
+                ToolApprovalHandler.denyAll(),
+                SkillLoader.createDefault(workspaceRoot, userHome),
+                memoryStore,
+                new RecalledMemoryPromptRenderer()
+        );
+
+        List<ConversationMessage> initialHistory = runtimeRunner.createInitialHistory(session());
+        assertEquals(2, initialHistory.size());
+
+        InteractiveTurnResult firstTurn = runtimeRunner.runTurn(
+                session(),
+                initialHistory,
+                "先分析修改方案",
+                AgentLoopObserver.noop(),
+                TracePublisher.noop(),
+                InteractionMode.PLAN
+        );
+        InteractiveTurnResult secondTurn = runtimeRunner.runTurn(
+                session(),
+                firstTurn.messages(),
+                "开始调试失败测试",
+                AgentLoopObserver.noop(),
+                TracePublisher.noop()
+        );
+
+        List<String> firstSystemMessages = systemMessages(modelAdapterFactory.recordedCalls.get(0));
+        List<String> secondSystemMessages = systemMessages(modelAdapterFactory.recordedCalls.get(1));
+
+        assertEquals(1, recalledMessages(firstSystemMessages).size());
+        assertTrue(recalledMessages(firstSystemMessages).get(0).contains("project-plan-boundary"));
+        assertEquals(1, recalledMessages(secondSystemMessages).size());
+        assertTrue(recalledMessages(secondSystemMessages).get(0).contains("project-debug-boundary"));
+        assertFalse(recalledMessages(secondSystemMessages).get(0).contains("project-plan-boundary"));
+        assertEquals("回答: 先分析修改方案", firstTurn.finalAnswer());
+        assertEquals("回答: 开始调试失败测试", secondTurn.finalAnswer());
+    }
+
     private static SessionSummary session() {
         return new SessionSummary(
                 "session-001",
@@ -292,6 +372,35 @@ class InteractiveRuntimeRunnerTest {
         }
     }
 
+    private static final class RecallRecordingModelAdapterFactory implements CliRuntimeBootstrap.ModelAdapterFactory {
+
+        private final List<List<ConversationMessage>> recordedCalls = new ArrayList<>();
+        private final List<String> recallResponses;
+        private int recallCursor;
+
+        private RecallRecordingModelAdapterFactory(List<String> recallResponses) {
+            this.recallResponses = recallResponses;
+        }
+
+        @Override
+        public ModelAdapter create(SessionSummary sessionSummary, List<ToolDefinition> availableTools) {
+            return messages -> {
+                recordedCalls.add(List.copyOf(messages));
+                String latestPrompt = messages.stream()
+                        .filter(message -> message.role() == MessageRole.USER)
+                        .reduce((first, second) -> second)
+                        .orElseThrow()
+                        .content();
+                return new FinalModelResponse("回答: " + latestPrompt);
+            };
+        }
+
+        @Override
+        public ModelAdapter createContextSummaryModel(SessionSummary sessionSummary) {
+            return messages -> new FinalModelResponse(recallResponses.get(recallCursor++));
+        }
+    }
+
     private static final class RecordingTracePublisher implements TracePublisher {
 
         private final List<TraceEvent> events = new ArrayList<>();
@@ -309,5 +418,29 @@ class InteractiveRuntimeRunnerTest {
     private void writeSkill(Path skillRoot, String frontMatter, String body) throws Exception {
         Files.createDirectories(skillRoot);
         Files.writeString(skillRoot.resolve("SKILL.md"), frontMatter + body);
+    }
+
+    private static MemoryRecord memoryRecord(
+            String id,
+            MemoryType type,
+            String title,
+            String summary,
+            String body
+    ) {
+        Instant timestamp = Instant.parse("2026-04-16T07:00:00Z");
+        return new MemoryRecord(id, type, title, summary, body, timestamp, timestamp, List.of("demo"));
+    }
+
+    private static List<String> systemMessages(List<ConversationMessage> messages) {
+        return messages.stream()
+                .filter(message -> message.role() == MessageRole.SYSTEM)
+                .map(ConversationMessage::content)
+                .toList();
+    }
+
+    private static List<String> recalledMessages(List<String> systemMessages) {
+        return systemMessages.stream()
+                .filter(message -> message.contains("# Recalled Memories"))
+                .collect(Collectors.toList());
     }
 }

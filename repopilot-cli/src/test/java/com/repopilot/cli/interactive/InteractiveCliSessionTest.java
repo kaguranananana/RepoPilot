@@ -6,6 +6,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.repopilot.cli.runtime.CliRuntimeBootstrap;
 import com.repopilot.core.agent.AgentLoopObserver;
+import com.repopilot.core.memory.FilePersistentMemoryStore;
+import com.repopilot.core.memory.PersistentMemoryStore;
 import com.repopilot.core.model.ConversationMessage;
 import com.repopilot.core.model.FinalModelResponse;
 import com.repopilot.core.model.MessageRole;
@@ -120,6 +122,10 @@ class InteractiveCliSessionTest {
         assertTrue(outputStream.toString(StandardCharsets.UTF_8).contains("/help"));
         assertTrue(outputStream.toString(StandardCharsets.UTF_8).contains("/plan"));
         assertTrue(outputStream.toString(StandardCharsets.UTF_8).contains("/execute"));
+        assertTrue(outputStream.toString(StandardCharsets.UTF_8).contains("/remember"));
+        assertTrue(outputStream.toString(StandardCharsets.UTF_8).contains("/memories"));
+        assertTrue(outputStream.toString(StandardCharsets.UTF_8).contains("/memory <id>"));
+        assertTrue(outputStream.toString(StandardCharsets.UTF_8).contains("/forget <id>"));
         assertTrue(outputStream.toString(StandardCharsets.UTF_8).contains("/reset"));
         assertTrue(outputStream.toString(StandardCharsets.UTF_8).contains("/exit"));
     }
@@ -332,6 +338,82 @@ class InteractiveCliSessionTest {
         assertTrue(output.contains("[approval] 当前正在等待审批，请输入 y/yes 或 n/no。"));
         assertTrue(output.contains("[assistant] 写入完成"));
         assertFalse(output.contains("[user] 2. 把审批结果改成“用户在终端输入 y 后通过”"));
+    }
+
+    @Test
+    void shouldRememberMemoryWithoutRunningModelTurn() {
+        RecordingSessionApiClient sessionApiClient = new RecordingSessionApiClient(List.of(
+                session("session-020", "workspace-001")
+        ));
+        RecordingRuntimeRunner runtimeRunner = new RecordingRuntimeRunner();
+        PersistentMemoryStore memoryStore = new FilePersistentMemoryStore(workspaceRoot);
+        ByteArrayOutputStream outputStream = new ByteArrayOutputStream();
+        PrintWriter outputWriter = new PrintWriter(outputStream, true, StandardCharsets.UTF_8);
+
+        InteractiveCliSession session = new InteractiveCliSession(
+                new BufferedReader(new StringReader("""
+                        /remember
+                        project
+                        Plan 与 Execute 必须分阶段
+                        该仓库要求先只读取证，再进入修改与验证。
+                        在 RepoPilot 中，PLAN 阶段只允许只读工具，EXECUTE 阶段才允许修改与验证。
+                        workflow,runtime
+                        /exit
+                        """)),
+                outputWriter,
+                sessionApiClient,
+                new InteractiveCliConfig("http://127.0.0.1:8080", "workspace-001"),
+                runtimeRunner,
+                new ConsoleTraceObserver(outputWriter),
+                new UserSkillCommandParser(),
+                memoryStore
+        );
+
+        session.start();
+
+        assertEquals(0, runtimeRunner.runTurnCount.get());
+        assertTrue(memoryStore.get("plan-execute").isPresent());
+        assertTrue(memoryStore.list().stream()
+                .anyMatch(entry -> entry.title().equals("Plan 与 Execute 必须分阶段")));
+        assertTrue(outputStream.toString(StandardCharsets.UTF_8).contains("[assistant] 已保存记忆"));
+    }
+
+    @Test
+    void shouldForgetMemoryWithoutRunningModelTurn() {
+        RecordingSessionApiClient sessionApiClient = new RecordingSessionApiClient(List.of(
+                session("session-021", "workspace-001")
+        ));
+        RecordingRuntimeRunner runtimeRunner = new RecordingRuntimeRunner();
+        PersistentMemoryStore memoryStore = new FilePersistentMemoryStore(workspaceRoot);
+        memoryStore.save(new com.repopilot.core.memory.MemoryRecord(
+                "project-plan-execute-boundary",
+                com.repopilot.core.memory.MemoryType.PROJECT,
+                "Plan 与 Execute 必须分阶段",
+                "该仓库要求先只读取证，再进入修改与验证。",
+                "在 RepoPilot 中，PLAN 阶段只允许只读工具，EXECUTE 阶段才允许修改与验证。",
+                Instant.parse("2026-05-04T10:00:00Z"),
+                Instant.parse("2026-05-04T10:00:00Z"),
+                List.of("workflow", "runtime")
+        ));
+        ByteArrayOutputStream outputStream = new ByteArrayOutputStream();
+        PrintWriter outputWriter = new PrintWriter(outputStream, true, StandardCharsets.UTF_8);
+
+        InteractiveCliSession session = new InteractiveCliSession(
+                new BufferedReader(new StringReader("/forget project-plan-execute-boundary\n/exit\n")),
+                outputWriter,
+                sessionApiClient,
+                new InteractiveCliConfig("http://127.0.0.1:8080", "workspace-001"),
+                runtimeRunner,
+                new ConsoleTraceObserver(outputWriter),
+                new UserSkillCommandParser(),
+                memoryStore
+        );
+
+        session.start();
+
+        assertEquals(0, runtimeRunner.runTurnCount.get());
+        assertTrue(memoryStore.get("project-plan-execute-boundary").isEmpty());
+        assertTrue(outputStream.toString(StandardCharsets.UTF_8).contains("[assistant] 已删除记忆 project-plan-execute-boundary"));
     }
 
     private static SessionSummary session(String sessionId, String workspaceId) {

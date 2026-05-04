@@ -4,6 +4,10 @@ import com.repopilot.cli.runtime.CliRuntimeBootstrap;
 import com.repopilot.cli.runtime.LocalEnvironmentMapLoader;
 import com.repopilot.cli.session.DefaultHttpTraceApiClient;
 import com.repopilot.cli.session.DefaultHttpSessionApiClient;
+import com.repopilot.core.memory.FilePersistentMemoryStore;
+import com.repopilot.core.memory.MemoryRecord;
+import com.repopilot.core.memory.MemoryType;
+import com.repopilot.core.memory.PersistentMemoryStore;
 import com.repopilot.core.trace.TracePublisher;
 import com.repopilot.core.model.ConversationMessage;
 import com.repopilot.protocol.session.CreateSessionRequest;
@@ -17,6 +21,7 @@ import java.io.PrintWriter;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.time.Clock;
+import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -42,6 +47,8 @@ public final class InteractiveCliSession {
     private final InteractiveRuntimeRunner runtimeRunner;
     private final ConsoleTraceObserver traceObserver;
     private final UserSkillCommandParser skillCommandParser;
+    private final UserMemoryCommandParser memoryCommandParser;
+    private final PersistentMemoryStore memoryStore;
 
     private SessionSummary currentSession;
     private List<ConversationMessage> history = List.of();
@@ -70,7 +77,10 @@ public final class InteractiveCliSession {
                         config.maxSteps(),
                         new TerminalApprovalHandler(lineInput, outputWriter)
                 ),
-                new ConsoleTraceObserver(outputWriter, config.traceLevel())
+                new ConsoleTraceObserver(outputWriter, config.traceLevel()),
+                new UserSkillCommandParser(),
+                new UserMemoryCommandParser(),
+                new FilePersistentMemoryStore(workspaceRoot)
         );
     }
 
@@ -90,7 +100,9 @@ public final class InteractiveCliSession {
                 config,
                 runtimeRunner,
                 traceObserver,
-                new UserSkillCommandParser()
+                new UserSkillCommandParser(),
+                new UserMemoryCommandParser(),
+                new FilePersistentMemoryStore(Path.of("").toAbsolutePath().normalize())
         );
     }
 
@@ -110,7 +122,9 @@ public final class InteractiveCliSession {
                 config,
                 runtimeRunner,
                 traceObserver,
-                new UserSkillCommandParser()
+                new UserSkillCommandParser(),
+                new UserMemoryCommandParser(),
+                new FilePersistentMemoryStore(Path.of("").toAbsolutePath().normalize())
         );
     }
 
@@ -131,7 +145,9 @@ public final class InteractiveCliSession {
                 config,
                 runtimeRunner,
                 traceObserver,
-                new UserSkillCommandParser()
+                new UserSkillCommandParser(),
+                new UserMemoryCommandParser(),
+                new FilePersistentMemoryStore(Path.of("").toAbsolutePath().normalize())
         );
     }
 
@@ -145,6 +161,81 @@ public final class InteractiveCliSession {
             ConsoleTraceObserver traceObserver,
             UserSkillCommandParser skillCommandParser
     ) {
+        this(
+                lineInput,
+                outputWriter,
+                sessionClient,
+                traceClient,
+                config,
+                runtimeRunner,
+                traceObserver,
+                skillCommandParser,
+                new UserMemoryCommandParser(),
+                new FilePersistentMemoryStore(Path.of("").toAbsolutePath().normalize())
+        );
+    }
+
+    InteractiveCliSession(
+            BufferedReader inputReader,
+            PrintWriter outputWriter,
+            SessionClient sessionClient,
+            InteractiveCliConfig config,
+            InteractiveRuntimeRunner runtimeRunner,
+            ConsoleTraceObserver traceObserver,
+            UserSkillCommandParser skillCommandParser,
+            PersistentMemoryStore memoryStore
+    ) {
+        this(
+                new InteractiveLineInput(inputReader),
+                outputWriter,
+                sessionClient,
+                TraceClient.noop(),
+                config,
+                runtimeRunner,
+                traceObserver,
+                skillCommandParser,
+                new UserMemoryCommandParser(),
+                memoryStore
+        );
+    }
+
+    InteractiveCliSession(
+            InteractiveLineInput lineInput,
+            PrintWriter outputWriter,
+            SessionClient sessionClient,
+            TraceClient traceClient,
+            InteractiveCliConfig config,
+            InteractiveRuntimeRunner runtimeRunner,
+            ConsoleTraceObserver traceObserver,
+            UserSkillCommandParser skillCommandParser,
+            PersistentMemoryStore memoryStore
+    ) {
+        this(
+                lineInput,
+                outputWriter,
+                sessionClient,
+                traceClient,
+                config,
+                runtimeRunner,
+                traceObserver,
+                skillCommandParser,
+                new UserMemoryCommandParser(),
+                memoryStore
+        );
+    }
+
+    InteractiveCliSession(
+            InteractiveLineInput lineInput,
+            PrintWriter outputWriter,
+            SessionClient sessionClient,
+            TraceClient traceClient,
+            InteractiveCliConfig config,
+            InteractiveRuntimeRunner runtimeRunner,
+            ConsoleTraceObserver traceObserver,
+            UserSkillCommandParser skillCommandParser,
+            UserMemoryCommandParser memoryCommandParser,
+            PersistentMemoryStore memoryStore
+    ) {
         this.lineInput = Objects.requireNonNull(lineInput, "lineInput must not be null.");
         this.outputWriter = Objects.requireNonNull(outputWriter, "outputWriter must not be null.");
         this.sessionClient = Objects.requireNonNull(sessionClient, "sessionClient must not be null.");
@@ -153,6 +244,8 @@ public final class InteractiveCliSession {
         this.runtimeRunner = Objects.requireNonNull(runtimeRunner, "runtimeRunner must not be null.");
         this.traceObserver = Objects.requireNonNull(traceObserver, "traceObserver must not be null.");
         this.skillCommandParser = Objects.requireNonNull(skillCommandParser, "skillCommandParser must not be null.");
+        this.memoryCommandParser = Objects.requireNonNull(memoryCommandParser, "memoryCommandParser must not be null.");
+        this.memoryStore = Objects.requireNonNull(memoryStore, "memoryStore must not be null.");
     }
 
     public void start() {
@@ -236,6 +329,11 @@ public final class InteractiveCliSession {
         traceObserver.onUserPrompt(input);
 
         try {
+            UserMemoryCommand memoryCommand = memoryCommandParser.parse(input).orElse(null);
+            if (memoryCommand != null) {
+                runMemoryCommand(memoryCommand);
+                return;
+            }
             UserSkillCommand skillCommand = skillCommandParser.parse(input).orElse(null);
             if (skillCommand != null) {
                 runSkillCommand(skillCommand);
@@ -255,6 +353,125 @@ public final class InteractiveCliSession {
         } catch (RuntimeException exception) {
             traceObserver.onError(exception.getMessage());
         }
+    }
+
+    private void runMemoryCommand(UserMemoryCommand memoryCommand) {
+        switch (memoryCommand.type()) {
+            case REMEMBER -> runRememberCommand();
+            case LIST -> traceObserver.onAssistantAnswer(renderMemoryIndex());
+            case SHOW -> traceObserver.onAssistantAnswer(renderSingleMemory(memoryCommand.id().orElseThrow()));
+            case FORGET -> forgetMemory(memoryCommand.id().orElseThrow());
+        }
+    }
+
+    private void runRememberCommand() {
+        try {
+            MemoryType type = MemoryType.fromStorageValue(readMemoryField("memory type [user/project/feedback/reference]: "));
+            String title = readMemoryField("memory title: ");
+            String summary = readMemoryField("memory summary: ");
+            String body = readMemoryField("memory body: ");
+            String tagsLine = readMemoryField("memory tags (comma separated, optional): ");
+            MemoryRecord record = new MemoryRecord(
+                    generateMemoryId(title),
+                    type,
+                    title,
+                    summary,
+                    body,
+                    Instant.now(),
+                    Instant.now(),
+                    parseTags(tagsLine)
+            );
+            memoryStore.save(record);
+            traceObserver.onAssistantAnswer("已保存记忆 " + record.id());
+        } catch (IOException exception) {
+            throw new IllegalStateException("读取记忆录入输入失败。", exception);
+        }
+    }
+
+    private void forgetMemory(String id) {
+        MemoryRecord existingRecord = memoryStore.get(id).orElseThrow(
+                () -> new IllegalArgumentException("记忆不存在: " + id)
+        );
+        memoryStore.delete(existingRecord.id());
+        traceObserver.onAssistantAnswer("已删除记忆 " + existingRecord.id());
+    }
+
+    private String renderMemoryIndex() {
+        List<com.repopilot.core.memory.MemoryIndexEntry> entries = memoryStore.list();
+        if (entries.isEmpty()) {
+            return "当前没有持久记忆。";
+        }
+        StringBuilder builder = new StringBuilder("当前持久记忆：");
+        for (com.repopilot.core.memory.MemoryIndexEntry entry : entries) {
+            builder.append(System.lineSeparator())
+                    .append("- ")
+                    .append(entry.id())
+                    .append(" [")
+                    .append(entry.type().storageValue())
+                    .append("] ")
+                    .append(entry.title())
+                    .append(" :: ")
+                    .append(entry.summary());
+        }
+        return builder.toString();
+    }
+
+    private String renderSingleMemory(String id) {
+        MemoryRecord record = memoryStore.get(id).orElseThrow(
+                () -> new IllegalArgumentException("记忆不存在: " + id)
+        );
+        return """
+                id: %s
+                type: %s
+                title: %s
+                summary: %s
+
+                %s
+                """.formatted(
+                record.id(),
+                record.type().storageValue(),
+                record.title(),
+                record.summary(),
+                record.body()
+        ).strip();
+    }
+
+    private String readMemoryField(String prompt) throws IOException {
+        outputWriter.print(prompt);
+        outputWriter.flush();
+        String value = lineInput.readLine();
+        if (value == null) {
+            throw new IllegalStateException("记忆录入被中断。");
+        }
+        return value.strip();
+    }
+
+    private List<String> parseTags(String tagsLine) {
+        if (tagsLine == null || tagsLine.isBlank()) {
+            return List.of();
+        }
+        return List.of(tagsLine.split(",")).stream()
+                .map(String::strip)
+                .filter(tag -> !tag.isEmpty())
+                .toList();
+    }
+
+    private String generateMemoryId(String title) {
+        // 首版显式只接受从标题里提取出的 ASCII token。
+        // 这里按非字母数字切分，
+        // 再把有效 token 用 `-` 连接成稳定 id，
+        // 如果标题里完全没有可用 token，就直接暴露错误而不是偷偷生成不可读 id。
+        String generatedId = List.of(title.split("[^A-Za-z0-9]+")).stream()
+                .map(String::strip)
+                .filter(token -> !token.isEmpty())
+                .map(String::toLowerCase)
+                .distinct()
+                .reduce((left, right) -> left + "-" + right)
+                .orElse("");
+        if (generatedId.isEmpty()) {
+            throw new IllegalArgumentException("无法从标题生成稳定 id，请在标题中包含英文字母或数字。");
+        }
+        return generatedId;
     }
 
     private void runSkillCommand(UserSkillCommand skillCommand) {

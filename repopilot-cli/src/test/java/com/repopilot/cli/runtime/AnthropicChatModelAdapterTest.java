@@ -237,6 +237,50 @@ class AnthropicChatModelAdapterTest {
     }
 
     @Test
+    void shouldSerializeArrayToolArgumentsAsJsonStringsWhenParsingToolUseBlocks() throws Exception {
+        httpServer.createContext("/v1/messages", exchange -> respondJson(exchange, """
+                {
+                  "id": "msg_003_array",
+                  "type": "message",
+                  "role": "assistant",
+                  "content": [
+                    {
+                      "type": "tool_use",
+                      "id": "toolu_array",
+                      "name": "submit_structured_context_summary",
+                      "input": {
+                        "user_goal": "修复测试失败",
+                        "current_phase": "EXECUTE",
+                        "plan_state": "已完成定位",
+                        "touched_files": ["src/App.java"],
+                        "important_findings": ["断言失败来自状态字段"],
+                        "failed_commands": [],
+                        "decisions": ["只做最小补丁"],
+                        "next_actions": ["修改状态字段后复测"]
+                      }
+                    }
+                  ],
+                  "stop_reason": "tool_use"
+                }
+                """));
+        httpServer.start();
+
+        AnthropicChatModelAdapter adapter = new AnthropicChatModelAdapter(
+                "test-key",
+                baseUrl,
+                "kimi-k2.6",
+                List.of()
+        );
+
+        ToolCallModelResponse response = assertInstanceOf(ToolCallModelResponse.class, adapter.next(List.of(
+                new ConversationMessage(MessageRole.USER, "压缩上下文")
+        )));
+
+        assertEquals("[\"src/App.java\"]", response.toolCalls().get(0).arguments().get("touched_files"));
+        assertEquals("[]", response.toolCalls().get(0).arguments().get("failed_commands"));
+    }
+
+    @Test
     void shouldSerializeAssistantToolUseAndToolResultMessages() throws Exception {
         httpServer.createContext("/v1/messages", exchange -> {
             lastRequestBody = new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8);

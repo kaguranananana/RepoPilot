@@ -106,6 +106,8 @@ class SystemPromptBuilderTest {
         assertTrue(boundary.baseInstructions().contains("不要把同一旧行同时写成空格上下文和删除行"));
         assertTrue(boundary.baseInstructions().contains("坏例子"));
         assertTrue(boundary.baseInstructions().contains("好例子"));
+        assertTrue(boundary.baseInstructions().contains("recalled memory 是历史线索"));
+        assertTrue(boundary.baseInstructions().contains("必须重新用工具验证"));
     }
 
     @Test

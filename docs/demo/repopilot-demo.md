@@ -1,10 +1,11 @@
 # RepoPilot Demo Guide
 
-本文档整理当前可以直接对外展示的 3 类证据：
+本文档整理当前可以直接对外展示的 4 类证据：
 
 1. scripted baseline
 2. real-model eval baseline
 3. 真实交互式 CLI 会话记录
+4. 持久记忆最小闭环
 
 目标不是把所有结果包装成“已经产品完成”，而是把已经验证过的能力和已经暴露出的风险都讲清楚。
 
@@ -201,3 +202,52 @@ status=ready
    - 再补一句会话 B 暴露过宽补丁问题，说明你清楚当前还没产品完成，并且知道缺口在哪里。
 
 这种讲法比单纯报“都通过了”更可信，也更像真正做过 Agent Runtime 的人。
+
+## Demo 4：Persistent Memory 最小闭环
+
+### 目标
+
+证明 RepoPilot 已经把 short-term memory 和 persistent memory 分层：
+
+- 长期事实可被显式写入工作区内的 `.repopilot/memory/`
+- 新任务开始前会自动召回少量相关记忆
+- recalled memory 只是线索，模型仍需重新读取代码或运行命令验证
+
+### 推荐演示脚本
+
+进入交互式 CLI 后，先显式写入一条 `project` 记忆：
+
+```text
+/remember
+project
+Plan 与 Execute 必须分阶段
+先分析再修改
+PLAN 阶段只允许只读工具，EXECUTE 阶段才允许修改与验证。
+runtime,workflow
+```
+
+然后发起一个相关任务：
+
+```text
+先分析这个改动方案，不要直接修改代码。
+```
+
+### 演示时要展示的证据
+
+1. `.repopilot/memory/` 下生成了独立 Markdown 文件
+2. `.repopilot/memory/MEMORY.md` 已更新索引
+3. 本轮请求中出现 `# Recalled Memories`
+4. 最终回答仍然通过 `read_file` / `grep_files` 等工具重新验证当前事实
+
+### 删除演示
+
+```text
+/forget plan-execute
+/memories
+```
+
+### 适合怎么讲
+
+- 这不是把所有历史都塞回 prompt，而是“文件化长期记忆 + 按需小规模召回”
+- 记忆索引和正文分离，便于人工审计，也便于面试时直接展示文件证据
+- recalled memory 不是事实源，因此系统提示明确要求模型重新验证

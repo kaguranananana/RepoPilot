@@ -4,6 +4,15 @@ import com.repopilot.core.agent.AgentLoop;
 import com.repopilot.core.agent.AgentLoopObserver;
 import com.repopilot.core.agent.AgentLoopRequest;
 import com.repopilot.core.agent.AgentLoopResult;
+import com.repopilot.core.agent.AgentRunMode;
+import com.repopilot.core.context.ModelStructuredContextSummaryGenerator;
+import com.repopilot.core.memory.FilePersistentMemoryStore;
+import com.repopilot.core.memory.MemoryIndexEntry;
+import com.repopilot.core.memory.MemoryRecallSelection;
+import com.repopilot.core.memory.MemoryRecallService;
+import com.repopilot.core.memory.ModelMemoryRecallSelector;
+import com.repopilot.core.memory.PersistentMemoryStore;
+import com.repopilot.core.memory.RecalledMemoryPromptRenderer;
 import com.repopilot.core.model.ConversationMessage;
 import com.repopilot.core.model.FinalModelResponse;
 import com.repopilot.core.model.MessageRole;
@@ -28,6 +37,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 
 /**
  * CLI 侧 runtime 引导器。
@@ -56,10 +66,11 @@ public interface CliRuntimeBootstrap {
         return new DefaultCliRuntimeBootstrap(
                 Clock.systemUTC(),
                 new SystemPromptBuilder(),
+                workspaceRoot,
                 SkillLoader.createDefault(workspaceRoot, resolveUserHome()),
-                new EnvironmentBackedModelAdapterFactory(
-                        LocalEnvironmentMapLoader.load(workspaceRoot, System.getenv())
-                )
+                new EnvironmentBackedModelAdapterFactory(LocalEnvironmentMapLoader.load(workspaceRoot, System.getenv())),
+                new FilePersistentMemoryStore(workspaceRoot),
+                new RecalledMemoryPromptRenderer()
         );
     }
 
@@ -73,8 +84,11 @@ public interface CliRuntimeBootstrap {
 
         private final Clock clock;
         private final SystemPromptBuilder systemPromptBuilder;
+        private final Path workspaceRoot;
         private final SkillLoader skillLoader;
         private final ModelAdapterFactory modelAdapterFactory;
+        private final PersistentMemoryStore memoryStore;
+        private final RecalledMemoryPromptRenderer recalledMemoryPromptRenderer;
 
         DefaultCliRuntimeBootstrap(
                 Clock clock,
@@ -84,8 +98,11 @@ public interface CliRuntimeBootstrap {
             this(
                     clock,
                     systemPromptBuilder,
+                    Path.of("").toAbsolutePath().normalize(),
                     SkillLoader.createDefault(Path.of("").toAbsolutePath().normalize(), resolveUserHome()),
-                    modelAdapterFactory
+                    modelAdapterFactory,
+                    new FilePersistentMemoryStore(Path.of("").toAbsolutePath().normalize()),
+                    new RecalledMemoryPromptRenderer()
             );
         }
 
@@ -95,12 +112,40 @@ public interface CliRuntimeBootstrap {
                 SkillLoader skillLoader,
                 ModelAdapterFactory modelAdapterFactory
         ) {
+            this(
+                    clock,
+                    systemPromptBuilder,
+                    Path.of("").toAbsolutePath().normalize(),
+                    skillLoader,
+                    modelAdapterFactory,
+                    new FilePersistentMemoryStore(Path.of("").toAbsolutePath().normalize()),
+                    new RecalledMemoryPromptRenderer()
+            );
+        }
+
+        DefaultCliRuntimeBootstrap(
+                Clock clock,
+                SystemPromptBuilder systemPromptBuilder,
+                Path workspaceRoot,
+                SkillLoader skillLoader,
+                ModelAdapterFactory modelAdapterFactory,
+                PersistentMemoryStore memoryStore,
+                RecalledMemoryPromptRenderer recalledMemoryPromptRenderer
+        ) {
             this.clock = Objects.requireNonNull(clock, "clock must not be null.");
             this.systemPromptBuilder =
                     Objects.requireNonNull(systemPromptBuilder, "systemPromptBuilder must not be null.");
+            this.workspaceRoot = Objects.requireNonNull(workspaceRoot, "workspaceRoot must not be null.")
+                    .toAbsolutePath()
+                    .normalize();
             this.skillLoader = Objects.requireNonNull(skillLoader, "skillLoader must not be null.");
             this.modelAdapterFactory =
                     Objects.requireNonNull(modelAdapterFactory, "modelAdapterFactory must not be null.");
+            this.memoryStore = Objects.requireNonNull(memoryStore, "memoryStore must not be null.");
+            this.recalledMemoryPromptRenderer = Objects.requireNonNull(
+                    recalledMemoryPromptRenderer,
+                    "recalledMemoryPromptRenderer must not be null."
+            );
         }
 
         @Override
@@ -116,7 +161,6 @@ public interface CliRuntimeBootstrap {
             if (maxSteps <= 0) {
                 throw new IllegalArgumentException("maxSteps must be greater than zero.");
             }
-            Path workspaceRoot = Path.of("").toAbsolutePath().normalize();
 
             // 先建立本轮可见的最小工具集合。
             // 这里显式把第一批内置工具注册进来，
@@ -134,6 +178,11 @@ public interface CliRuntimeBootstrap {
             // 避免把 sessionId、时间等高频信息直接混进稳定 system prompt 前缀。
             SystemPromptBoundary promptBoundary = systemPromptBuilder.build(
                     buildDynamicPromptContext(sessionSummary, availableTools, maxSteps)
+            );
+            Optional<ConversationMessage> recalledMemoryMessage = resolveRecalledMemoryMessage(
+                    sessionSummary,
+                    safePrompt,
+                    AgentRunMode.EXECUTE
             );
 
             // 主模型拿完整工具集合；摘要模型固定不暴露工具，
@@ -153,7 +202,7 @@ public interface CliRuntimeBootstrap {
             );
             AgentLoopResult result = agentLoop.run(new AgentLoopRequest(
                     runtimeModelAdapter,
-                    buildMessages(promptBoundary, safePrompt),
+                    buildMessages(promptBoundary, recalledMemoryMessage, safePrompt),
                     maxSteps
             ));
 
@@ -188,7 +237,42 @@ public interface CliRuntimeBootstrap {
             );
         }
 
-        private List<ConversationMessage> buildMessages(SystemPromptBoundary promptBoundary, String prompt) {
+        private Optional<ConversationMessage> resolveRecalledMemoryMessage(
+                SessionSummary sessionSummary,
+                String prompt,
+                AgentRunMode runMode
+        ) {
+            List<MemoryIndexEntry> candidates = memoryStore.list();
+            if (candidates.isEmpty()) {
+                return Optional.empty();
+            }
+
+            // 单次运行也复用同一套受限 selector：
+            // 本地先读索引，再让无工具模型只返回少量 id。
+            MemoryRecallService recallService = new MemoryRecallService(
+                    new ModelMemoryRecallSelector(modelAdapterFactory.createMemoryRecallSelectorModel(sessionSummary))
+            );
+            MemoryRecallSelection selection = recallService.recall(prompt, runMode, candidates);
+            if (selection.selectedIds().isEmpty()) {
+                return Optional.empty();
+            }
+
+            return Optional.of(recalledMemoryPromptRenderer.render(
+                    selection.selectedIds().stream()
+                            // selector 只能返回索引里已经存在的 id；
+                            // 这里再次强校验正文存在，防止索引和文件正文漂移后静默错用旧数据。
+                            .map(selectedId -> memoryStore.get(selectedId).orElseThrow(
+                                    () -> new IllegalStateException("记忆索引与正文不一致，缺少 id: " + selectedId)
+                            ))
+                            .toList()
+            ));
+        }
+
+        private List<ConversationMessage> buildMessages(
+                SystemPromptBoundary promptBoundary,
+                Optional<ConversationMessage> recalledMemoryMessage,
+                String prompt
+        ) {
             List<ConversationMessage> messages = new ArrayList<>();
 
             // 第一条 SYSTEM 消息放稳定 system prompt，
@@ -200,6 +284,10 @@ public interface CliRuntimeBootstrap {
             if (promptBoundary.hasRuntimeContextBlock()) {
                 messages.add(new ConversationMessage(MessageRole.SYSTEM, promptBoundary.runtimeContextBlock()));
             }
+
+            // recalled memory 只作为本轮临时线索插在用户任务前，
+            // 不落入长期 history，也不和稳定 prompt 边界混在一起。
+            recalledMemoryMessage.ifPresent(messages::add);
 
             // 最后一条 USER 消息才是真正的用户任务，
             // 保证 prompt 边界清晰，便于后续扩展上下文压缩与 trace。
@@ -233,6 +321,12 @@ public interface CliRuntimeBootstrap {
             // 因此这里显式传空工具列表，避免模型在压缩阶段生成 tool_calls。
             return create(sessionSummary, List.of());
         }
+
+        default ModelAdapter createMemoryRecallSelectorModel(SessionSummary sessionSummary) {
+            // recall selector 保持当前无工具约束，
+            // 这样新增的结构化摘要协议不会污染记忆召回的选择链路。
+            return createContextSummaryModel(sessionSummary);
+        }
     }
 
     final class EnvironmentBackedModelAdapterFactory implements ModelAdapterFactory {
@@ -264,6 +358,57 @@ public interface CliRuntimeBootstrap {
                 );
                 default -> throw new IllegalStateException("Unsupported model provider: " + modelConfig.provider());
             };
+        }
+
+        @Override
+        public ModelAdapter createContextSummaryModel(SessionSummary sessionSummary) {
+            List<ToolDefinition> summaryTools = List.of(ModelStructuredContextSummaryGenerator.summaryToolDefinition());
+            // 结构化摘要链路在 openai-compatible 提供方下需要显式强制 tool_choice，
+            // 否则 DeepSeek 这类模型在长上下文压缩场景里可能忽略工具定义，直接返回自然语言。
+            // 这里把“强制选择摘要提交工具”的约束只收敛在摘要模型构造路径里，
+            // 不污染普通运行时模型和记忆召回选择器。
+            return switch (modelConfig.provider()) {
+                case "bootstrap" -> create(sessionSummary, summaryTools);
+                case "openai-compatible" -> new OpenAiCompatibleChatModelAdapter(
+                        modelConfig.apiKey(),
+                        modelConfig.baseUrl(),
+                        modelConfig.modelName(),
+                        summaryTools,
+                        ModelStructuredContextSummaryGenerator.STRUCTURED_SUMMARY_TOOL_NAME,
+                        resolveContextSummaryThinkingMode()
+                );
+                case "anthropic" -> new AnthropicChatModelAdapter(
+                        modelConfig.apiKey(),
+                        modelConfig.baseUrl(),
+                        modelConfig.modelName(),
+                        summaryTools
+                );
+                default -> throw new IllegalStateException("Unsupported model provider: " + modelConfig.provider());
+            };
+        }
+
+        @Override
+        public ModelAdapter createMemoryRecallSelectorModel(SessionSummary sessionSummary) {
+            // 记忆召回选择器仍然维持“无工具、只输出少量 id”的原约束。
+            return create(sessionSummary, List.of());
+        }
+
+        private String resolveContextSummaryThinkingMode() {
+            // 这里只对 DeepSeek 模型关闭 thinking，
+            // 因为我们已经确认 V4-Pro 在默认思考模式下会拒绝带 tool_choice 的摘要请求。
+            // 普通主模型仍然保留原本的 thinking 行为；
+            // 非 DeepSeek 的 OpenAI 兼容模型也不应被注入这个 provider 私有参数。
+            if (!looksLikeDeepSeekModel()) {
+                return null;
+            }
+            return "disabled";
+        }
+
+        private boolean looksLikeDeepSeekModel() {
+            String modelName = modelConfig.modelName();
+            return modelName.equals("deepseek-chat")
+                    || modelName.equals("deepseek-reasoner")
+                    || modelName.startsWith("deepseek-");
         }
     }
 
